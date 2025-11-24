@@ -12,7 +12,7 @@ class AppState {
     // --- UI State ---
     var isWindowPresented: Bool = false
     var query: String = ""
-    var resultText: String = "" // 1. 修改: 默认不显示 "Ready..."，改为空
+    var resultText: String = ""
     var isLoading: Bool = false
     var showHistoryView: Bool = false
     
@@ -35,18 +35,13 @@ class AppState {
         if isWindowPresented {
             NSApp.activate(ignoringOtherApps: true)
             showHistoryView = false
-            // 注意：打开窗口时是否要清空上次的内容？
-            // 如果希望每次打开都像新的一样，可以取消下面这行的注释：
-            // reset()
         }
     }
     
-    // 2. 新增: ESC 键重置状态逻辑
     func reset() {
         if !query.isEmpty {
-            query = "" // 如果有输入，先清空输入
+            query = ""
         } else {
-            // 如果输入已空，清空结果回到初始状态
             resultText = ""
             isAIResponse = false
             showHistoryView = false
@@ -63,46 +58,48 @@ class AppState {
         showHistoryView = false
         
         // 1. 解析指令
+        // 将输入按空格分割，主要用于判断是否是保留命令
         let parts = trimmed.split(separator: " ", maxSplits: 1).map(String.init)
-        let command = parts[0].lowercased()
+        let firstWord = parts[0].lowercased()
         let content = parts.count > 1 ? parts[1] : ""
         
-        let defAlias = UserDefaults.standard.string(forKey: AppStorageKey.aliasDef) ?? "def"
-        let askAlias = UserDefaults.standard.string(forKey: AppStorageKey.aliasAsk) ?? "ask"
-        let serAlias = UserDefaults.standard.string(forKey: AppStorageKey.aliasSer) ?? "ser"
+        // 获取设置中的 Python 别名
         let pyAlias = UserDefaults.standard.string(forKey: AppStorageKey.aliasPy) ?? "py"
         
         isLoading = true
         
         Task {
-            if command == "quit" {
+            // --- 保留命令优先处理 ---
+            if firstWord == "quit" {
                 quitApp()
-            } else if command == "history" {
+            } else if firstWord == "history" {
                 await MainActor.run {
                     self.showHistoryView = true
                     self.isLoading = false
                 }
-            } else if command == "help" {
+            } else if firstWord == "help" {
                 showHelp()
-            } else if command == "set" {
+            } else if firstWord == "set" {
                 await MainActor.run {
                     self.triggerOpenSettings()
                 }
-            } else if command == "loc" {
-                performLocalDictionaryLookup(word: content)
-            } else if command == defAlias {
-                await performSmartDictionaryLookup(word: content)
-            } else if command == askAlias {
-                await performAIQuery(question: content)
-            } else if command == serAlias {
-                performWebSearch(term: content)
-            } else if command == pyAlias {
+            } else if firstWord == pyAlias {
+                // 如果是 py 命令，执行脚本
                 await runPythonScript(code: content)
-            } else {
-                 await MainActor.run {
-                     self.resultText = "Unknown command. Type 'help' to see commands."
-                     self.isLoading = false
-                 }
+            }
+            // --- 智能判断逻辑 (AI 优先) ---
+            else {
+                // 判断输入是一个单词还是句子
+                let isSingleWord = !trimmed.contains(" ")
+                
+                if isSingleWord {
+                    // 逻辑：单次 -> 智能查词 (AI -> 失败转 Loc)
+                    // 注意：performSmartDictionaryLookup 内部已包含 catch 错误后调用 performLocalDictionaryLookup 的逻辑
+                    await performSmartDictionaryLookup(word: trimmed)
+                } else {
+                    // 逻辑：句子 -> 自动 AI 搜索
+                    await performAIQuery(question: trimmed)
+                }
             }
         }
     }
@@ -110,112 +107,98 @@ class AppState {
     // --- 具体功能实现 ---
     
     @MainActor
-        private func performLocalDictionaryLookup(word: String) {
-            // 调用 DictionaryService
-            if let rawRes = DictionaryService.lookupLocal(word: word) {
-                let formattedRes = """
-                ###  Local Dictionary: **\(word)**
-                
-                > \(rawRes.replacingOccurrences(of: "\n", with: "\n> "))
-                """
-                self.resultText = formattedRes
-                finalizeCommand(type: "loc", input: word, output: formattedRes)
-            } else {
-                self.resultText = "No definition found in local dictionary."
-                self.isLoading = false
-            }
+    private func performLocalDictionaryLookup(word: String) {
+        if let rawRes = DictionaryService.lookupLocal(word: word) {
+            let formattedRes = """
+            ###  Local Dictionary: **\(word)**
+            
+            > \(rawRes.replacingOccurrences(of: "\n", with: "\n> "))
+            """
+            self.resultText = formattedRes
+            // 记录类型标记为 'loc'
+            finalizeCommand(type: "loc", input: word, output: formattedRes)
+        } else {
+            self.resultText = "No definition found in local dictionary."
+            self.isLoading = false
         }
+    }
     
     @MainActor
-        private func performSmartDictionaryLookup(word: String) async {
-            self.resultText = ""
-            let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
-            let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
-            
-            // 从 Service 获取 Prompt
-            let prompt = DictionaryService.generateSmartPrompt(for: word)
-            
-            var fullResponse = ""
-            
-            do {
-                for try await chunk in GeminiService.streamResponse(query: prompt, apiKey: key, model: model) {
-                    self.resultText += chunk
-                    fullResponse += chunk
-                }
-                
-                self.isAIResponse = true
-                finalizeCommand(type: "def", input: word, output: fullResponse)
-                
-            } catch {
-                // AI 失败回退到本地逻辑
-                self.resultText = "⚠️ Network error. Falling back to local dictionary...\n\n"
-                performLocalDictionaryLookup(word: word)
+    private func performSmartDictionaryLookup(word: String) async {
+        self.resultText = ""
+        let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
+        let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
+        
+        let prompt = DictionaryService.generateSmartPrompt(for: word)
+        
+        var fullResponse = ""
+        
+        do {
+            for try await chunk in GeminiService.streamResponse(query: prompt, apiKey: key, model: model) {
+                self.resultText += chunk
+                fullResponse += chunk
             }
+            
+            self.isAIResponse = true
+            // 记录类型标记为 'AI-Def' 或 'Auto'
+            finalizeCommand(type: "def", input: word, output: fullResponse)
+            
+        } catch {
+            // 连不到网或 API 错误，回退到本地词典
+            self.resultText = "⚠️ Network unavailable. Using local dictionary...\n\n"
+            performLocalDictionaryLookup(word: word)
         }
+    }
 
-    
     @MainActor
     private func triggerOpenSettings() {
-            // 关闭当前命令窗口
-            self.isWindowPresented = false
-            self.query = ""
-            self.isLoading = false
-            
-            // 设置信号为 true，通知 ContentView 执行动作
-            self.shouldOpenSettings = true
-        }
+        self.isWindowPresented = false
+        self.query = ""
+        self.isLoading = false
+        self.shouldOpenSettings = true
+    }
     
     @MainActor
-        private func runPythonScript(code: String) async {
-            self.resultText = "Running Python script..."
-            
-            // 调用 PythonRunner Service
-            let result = await PythonRunner.run(code: code)
-            
-            // UI 格式化封装
-            let formattedOutput = """
-            ### 🐍 Python Output
-            ```text
-            \(result)
-            ```
-            """
-            self.resultText = formattedOutput
-            
-            // 存入历史记录 (raw code -> raw output)
-            finalizeCommand(type: "py", input: code, output: result)
-        }
+    private func runPythonScript(code: String) async {
+        self.resultText = "Running Python script..."
+        let result = await PythonRunner.run(code: code)
+        
+        let formattedOutput = """
+        ### 🐍 Python Output
+        ```text
+        \(result)
+        ```
+        """
+        self.resultText = formattedOutput
+        finalizeCommand(type: "py", input: code, output: result)
+    }
 
-    
     @MainActor
-        private func performAIQuery(question: String) async {
-            // 初始状态
-            self.resultText = "" // 先清空，准备接收流
-            let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
-            let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
-            
-            // 临时变量用于拼接完整结果以便存入历史记录
-            var fullResponse = ""
-            
-            do {
-                // 使用流式请求
-                for try await chunk in GeminiService.streamResponse(query: question, apiKey: key, model: model) {
-                    // 一旦收到第一个字符，就可以把 loading 状态去掉(或者保留直到结束，看个人喜好，这里选择保留直到结束)
-                    // self.isLoading = false
-                    
-                    self.resultText += chunk
-                    fullResponse += chunk
-                }
-                
-                // 流结束
-                self.isAIResponse = true
-                finalizeCommand(type: "ask", input: question, output: fullResponse)
-                
-            } catch {
-                self.resultText = "Error: \(error.localizedDescription)"
-                self.isLoading = false
+    private func performAIQuery(question: String) async {
+        self.resultText = ""
+        let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
+        let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
+        
+        var fullResponse = ""
+        
+        do {
+            for try await chunk in GeminiService.streamResponse(query: question, apiKey: key, model: model) {
+                self.resultText += chunk
+                fullResponse += chunk
             }
+            
+            self.isAIResponse = true
+            // 记录类型标记为 'AI'
+            finalizeCommand(type: "ai", input: question, output: fullResponse)
+            
+        } catch {
+            self.resultText = "Error: \(error.localizedDescription)"
+            self.isLoading = false
         }
+    }
     
+    // Web Search 被移除自动触发，若需要可作为备选，或者在 AI 回答中引导
+    // 这里保留方法以防未来通过特定指令调用，但 executeCommand 中不再默认调用
     private func performWebSearch(term: String) {
         let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         if let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
@@ -235,42 +218,30 @@ class AppState {
     
     @MainActor
     private func showHelp() {
-        // ... (保持原有逻辑)
-        let def = UserDefaults.standard.string(forKey: AppStorageKey.aliasDef) ?? "def"
-        let ask = UserDefaults.standard.string(forKey: AppStorageKey.aliasAsk) ?? "ask"
-        let ser = UserDefaults.standard.string(forKey: AppStorageKey.aliasSer) ?? "ser"
         let py = UserDefaults.standard.string(forKey: AppStorageKey.aliasPy) ?? "py"
         
         let helpText = """
-        ### Available Commands
+        ### 🚀 Commander AI Mode
 
-        These commands allow interaction with various services. Command prefixes (e.g., `\(def)`) are defined by constants in the application environment.
+        Simply type what you want to know.
 
-        | Command Syntax | Description |
+        - **One Word**: Smart Dictionary Lookup (AI Definition -> Local Backup).
+        - **Sentence**: AI Chat / Answer.
+        
+        #### Special Commands
+        | Command | Description |
         | :--- | :--- |
-        | `\(def) <word>` | Local Dictionary Lookup |
-        | `\(ask) <query>` | AI Chat (Gemini) |
-        | `\(ser) <term>` | Google Search |
         | `\(py) <code>` | Execute Python Code |
-        | `history` | View Request History |
+        | `history` | View Command History |
         | `set` | Open Settings |
         | `quit` | Quit Application |
         | `help` | Show this message |
 
         ---
-
-        #### Input Controls
-        *   **`ESC`**: Clear / Reset the current input buffer.
         """
-
-        
-        
-        
         self.resultText = helpText
         self.isLoading = false
     }
-    
-    // --- 辅助逻辑 ---
     
     @MainActor
     private func finalizeCommand(type: String, input: String, output: String) {
@@ -300,7 +271,6 @@ class AppState {
         pasteboard.setString(text, forType: .string)
     }
     
-    // ... (保持 History Persistence 和 UI Actions 逻辑不变)
     private func historyFileURL() -> URL {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         return paths[0].appendingPathComponent("commander_history.json")
@@ -325,11 +295,14 @@ class AppState {
     }
     
     func restoreHistoryItem(_ item: HistoryItem) {
-        self.query = "\(item.type) \(item.query)"
+        // 恢复时不再强制加前缀，直接放入 query
+        // 除非是 py 命令，否则直接放原文即可触发对应逻辑
+        if item.type == "py" {
+             self.query = "py \(item.query)"
+        } else {
+             self.query = item.query
+        }
         self.resultText = item.result
         self.showHistoryView = false
     }
 }
-
-
-

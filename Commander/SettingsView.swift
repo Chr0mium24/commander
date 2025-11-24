@@ -4,7 +4,7 @@ import ServiceManagement
 
 struct SettingsView: View {
     @AppStorage(AppStorageKey.launchAtLogin) var launchAtLogin = false
-    @AppStorage(AppStorageKey.historyLimit) var historyLimit = 10
+    @AppStorage(AppStorageKey.historyLimit) var historyLimit = 50
     @AppStorage(AppStorageKey.autoCopy) var autoCopy = false
     
     @AppStorage(AppStorageKey.geminiKey) var geminiKey = ""

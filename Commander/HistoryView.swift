@@ -1,11 +1,3 @@
-//
-//  HistoryView.swift
-//  Commander
-//
-//  Created by Chr0mium on 11/21/25.
-//
-
-
 import SwiftUI
 
 struct HistoryView: View {
@@ -20,48 +12,69 @@ struct HistoryView: View {
             
             List {
                 ForEach(appState.history) { item in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text("\(item.type) \(item.query)")
-                                .font(.system(.body, design: .monospaced))
-                                .fontWeight(.bold)
-                            Text(item.result.prefix(50) + "...")
+                    HStack(alignment: .top) { // 对齐方式改为 .top 以便多行时更美观
+                        VStack(alignment: .leading, spacing: 4) {
+                            // 第一行：类型 + 查询词 + 时间
+                            HStack {
+                                Text(item.type.uppercased())
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Color.secondary.opacity(0.2))
+                                    .cornerRadius(4)
+                                
+                                Text(item.query)
+                                    .font(.system(.body, design: .monospaced))
+                                    .fontWeight(.semibold)
+                                    .lineLimit(1)
+                                
+                                Spacer()
+                                
+                                // 新增：显示时间
+                                Text(item.timestamp, format: .dateTime.month(.defaultDigits).day().hour().minute())
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                            }
+                            
+                            // 第二行：结果预览
+                            Text(item.result.prefix(80) + "...")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .lineLimit(2)
                         }
-                        Spacer()
                         
-                        // 复制按钮
-                        Button(action: {
-                            let pb = NSPasteboard.general
-                            pb.clearContents()
-                            pb.setString(item.result, forType: .string)
-                        }) {
-                            Image(systemName: "doc.on.doc")
-                                .font(.caption)
+                        // 右侧操作按钮区域
+                        VStack(spacing: 10) {
+                            Button(action: {
+                                let pb = NSPasteboard.general
+                                pb.clearContents()
+                                pb.setString(item.result, forType: .string)
+                            }) {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                            
+                            Button(action: {
+                                appState.deleteHistoryItem(id: item.id)
+                            }) {
+                                Image(systemName: "trash")
+                                    .font(.caption)
+                                    .foregroundColor(.red.opacity(0.8))
+                            }
+                            .buttonStyle(.borderless)
                         }
-                        .buttonStyle(.borderless)
-                        
-                        // 删除按钮
-                        Button(action: {
-                            appState.deleteHistoryItem(id: item.id)
-                        }) {
-                            Image(systemName: "trash")
-                                .font(.caption)
-                                .foregroundColor(.red)
-                        }
-                        .buttonStyle(.borderless)
+                        .padding(.leading, 8)
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 6)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        // 点击条目恢复状态
                         appState.restoreHistoryItem(item)
                     }
                 }
             }
-            .scrollContentBackground(.hidden) // 透明背景
+            .scrollContentBackground(.hidden)
         }
         .background(.ultraThinMaterial)
     }
