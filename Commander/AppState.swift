@@ -89,8 +89,11 @@ class AppState {
             }
             // --- 智能判断逻辑 (AI 优先) ---
             else {
-                // 判断输入是一个单词还是句子
-                let isSingleWord = !trimmed.contains(" ")
+                // 判断是否包含中文
+                let hasChinese = trimmed.range(of: "\\p{Han}", options: .regularExpression) != nil
+
+                // 判断是否为单词：(不包含空格) 且 (不包含中文)
+                let isSingleWord = !trimmed.contains(" ") && !hasChinese
                 
                 if isSingleWord {
                     // 逻辑：单次 -> 智能查词 (AI -> 失败转 Loc)
