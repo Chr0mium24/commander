@@ -1,3 +1,11 @@
+//
+//  DictionaryService.swift
+//  Commander
+//
+//  Created by Chr0mium on 11/22/25.
+//
+
+
 import Foundation
 import CoreServices // 必须引入，用于 DCS 函数
 

@@ -110,69 +110,48 @@ class AppState {
     // --- 具体功能实现 ---
     
     @MainActor
-    private func performLocalDictionaryLookup(word: String) {
-        let range = DCSGetTermRangeInString(nil, word as CFString, 0)
-        if let definition = DCSCopyTextDefinition(nil, word as CFString, range) {
-            let rawRes = String(definition.takeRetainedValue())
-            
-            // 简单优化：给本地结果加上 Markdown 引用块，使其不那么单调
-            let formattedRes = """
-            ###  Local Dictionary: **\(word)**
-            
-            > \(rawRes.replacingOccurrences(of: "\n", with: "\n> "))
-            """
-            
-            self.resultText = formattedRes
-            finalizeCommand(type: "loc", input: word, output: formattedRes)
-        } else {
-            self.resultText = "No definition found in local dictionary."
-            self.isLoading = false
+        private func performLocalDictionaryLookup(word: String) {
+            // 调用 DictionaryService
+            if let rawRes = DictionaryService.lookupLocal(word: word) {
+                let formattedRes = """
+                ###  Local Dictionary: **\(word)**
+                
+                > \(rawRes.replacingOccurrences(of: "\n", with: "\n> "))
+                """
+                self.resultText = formattedRes
+                finalizeCommand(type: "loc", input: word, output: formattedRes)
+            } else {
+                self.resultText = "No definition found in local dictionary."
+                self.isLoading = false
+            }
         }
-    }
     
     @MainActor
-    private func performSmartDictionaryLookup(word: String) async {
-        self.resultText = "" // 清空准备接收流
-        let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
-        let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
-        
-        // 精心设计的 Prompt，强制要求双语和格式
-        let dictionaryPrompt = """
-        You are a professional dictionary engine. Explain the word: "\(word)".
-        
-        **Format Requirements:**
-        1. **Headword**: The word followed by IPA pronunciation.
-        2. **🇨🇳 Chinese Definition**: Accurate Simplified Chinese translation. Don't use pinyin.
-        3  **Etymology**: Show the etymology of words in Chinese.
-        3. **🇬🇧 English Definition**: Concise, Oxford/Webster style definition.
-        4. **Examples**: 2 useful example sentences showing usage.
-        5. **Etymology/Tags** (Optional): E.g., [Noun], [Verb], or origin if interesting.
-        
-        **Style**:
-        - Use Markdown.
-        - Use `###` for headers.
-        - Use **bold** for keywords.
-        - Do not add conversational filler (like "Here is the definition"). Just the content.
-        """
-        
-        var fullResponse = ""
-        
-        do {
-            // 复用流式请求
-            for try await chunk in GeminiService.streamResponse(query: dictionaryPrompt, apiKey: key, model: model) {
-                self.resultText += chunk
-                fullResponse += chunk
+        private func performSmartDictionaryLookup(word: String) async {
+            self.resultText = ""
+            let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
+            let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
+            
+            // 从 Service 获取 Prompt
+            let prompt = DictionaryService.generateSmartPrompt(for: word)
+            
+            var fullResponse = ""
+            
+            do {
+                for try await chunk in GeminiService.streamResponse(query: prompt, apiKey: key, model: model) {
+                    self.resultText += chunk
+                    fullResponse += chunk
+                }
+                
+                self.isAIResponse = true
+                finalizeCommand(type: "def", input: word, output: fullResponse)
+                
+            } catch {
+                // AI 失败回退到本地逻辑
+                self.resultText = "⚠️ Network error. Falling back to local dictionary...\n\n"
+                performLocalDictionaryLookup(word: word)
             }
-            
-            self.isAIResponse = true
-            finalizeCommand(type: "def", input: word, output: fullResponse)
-            
-        } catch {
-            // 如果 AI 失败，自动回退到本地词典，体验更好
-            self.resultText = "⚠️ Network error. Falling back to local dictionary...\n\n"
-            performLocalDictionaryLookup(word: word)
         }
-    }
 
     
     @MainActor
@@ -187,73 +166,13 @@ class AppState {
         }
     
     @MainActor
-    private func runPythonScript(code: String) async {
+        private func runPythonScript(code: String) async {
             self.resultText = "Running Python script..."
             
-            // 1. 获取 Python 路径，如果为空则使用默认系统路径
-            var pythonPath = UserDefaults.standard.string(forKey: AppStorageKey.pythonPath) ?? ""
-            if pythonPath.isEmpty { pythonPath = "/usr/bin/python3" }
+            // 调用 PythonRunner Service
+            let result = await PythonRunner.run(code: code)
             
-            // 2. 简单的安全检查 (可选)
-            guard FileManager.default.fileExists(atPath: pythonPath) else {
-                self.resultText = "⚠️ Python executable not found at: `\(pythonPath)`\nPlease configure the correct path in Settings."
-                self.isLoading = false
-                return
-            }
-            
-            // 3. 在后台线程执行 Process，以免阻塞 UI
-            let result: String = await Task.detached {
-                // 创建临时文件
-                let tempDir = FileManager.default.temporaryDirectory
-                let tempFile = tempDir.appendingPathComponent("commander_script_\(UUID().uuidString).py")
-                
-                do {
-                    // 写入代码到文件
-                    try code.write(to: tempFile, atomically: true, encoding: .utf8)
-                    
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: pythonPath)
-                    // -u 参数让 stdout 无缓冲，虽然这里是一次性读取，但好习惯
-                    process.arguments = ["-u", tempFile.path]
-                    
-                    let outputPipe = Pipe()
-                    let errorPipe = Pipe()
-                    process.standardOutput = outputPipe
-                    process.standardError = errorPipe
-                    
-                    try process.run()
-                    process.waitUntilExit()
-                    
-                    // 读取输出
-                    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                    
-                    let outputStr = String(data: outputData, encoding: .utf8) ?? ""
-                    let errorStr = String(data: errorData, encoding: .utf8) ?? ""
-                    
-                    // 清理临时文件
-                    try? FileManager.default.removeItem(at: tempFile)
-                    
-                    var finalOutput = ""
-                    if !outputStr.isEmpty {
-                        finalOutput += outputStr
-                    }
-                    if !errorStr.isEmpty {
-                        if !finalOutput.isEmpty { finalOutput += "\n\n" }
-                        finalOutput += "Error/Stderr:\n\(errorStr)"
-                    }
-                    
-                    if finalOutput.isEmpty {
-                        return "Done (No Output)"
-                    }
-                    return finalOutput
-                    
-                } catch {
-                    return "Execution Error: \(error.localizedDescription)"
-                }
-            }.value
-            
-            // 4. 格式化输出
+            // UI 格式化封装
             let formattedOutput = """
             ### 🐍 Python Output
             ```text
@@ -411,3 +330,6 @@ class AppState {
         self.showHistoryView = false
     }
 }
+
+
+
