@@ -72,7 +72,7 @@ class AppState {
             // --- 保留命令优先处理 ---
             if firstWord == "quit" {
                 quitApp()
-            } else if firstWord == "history" {
+            } else if firstWord == "hist" {
                 await MainActor.run {
                     self.showHistoryView = true
                     self.isLoading = false
@@ -86,7 +86,28 @@ class AppState {
             } else if firstWord == pyAlias {
                 // 如果是 py 命令，执行脚本
                 await runPythonScript(code: content)
-            }
+            }else if firstWord == "run" {
+                // 只有当有内容时才运行
+                if !content.isEmpty {
+                    self.resultText = "Running..."
+                    
+                    let output = await ShellService.run(content)
+                    
+                    await MainActor.run {
+                        let formattedOutput = """
+                        ### 💻 Shell Output
+                        ```bash
+                        \(output)
+                        ```
+                        """
+                        self.resultText = formattedOutput
+                        self.finalizeCommand(type: "run", input: content, output: output)
+                    }
+                } else {
+                    self.resultText = "Usage: run <command or script_name>"
+                    self.isLoading = false
+                }
+           }
             // --- 智能判断逻辑 (AI 优先) ---
             else {
                 // 判断是否包含中文
@@ -96,9 +117,7 @@ class AppState {
                 let isSingleWord = !trimmed.contains(" ") && !hasChinese
                 
                 if isSingleWord {
-                    // 逻辑：单次 -> 智能查词 (AI -> 失败转 Loc)
-                    // 注意：performSmartDictionaryLookup 内部已包含 catch 错误后调用 performLocalDictionaryLookup 的逻辑
-                    await performSmartDictionaryLookup(word: trimmed)
+                    await handleDictionaryLookup(word: trimmed)
                 } else {
                     // 逻辑：句子 -> 自动 AI 搜索
                     await performAIQuery(question: trimmed)
@@ -110,48 +129,36 @@ class AppState {
     // --- 具体功能实现 ---
     
     @MainActor
-    private func performLocalDictionaryLookup(word: String) {
-        if let rawRes = DictionaryService.lookupLocal(word: word) {
-            let formattedRes = """
-            ###  Local Dictionary: **\(word)**
+        private func handleDictionaryLookup(word: String) async {
+            self.resultText = ""
+            let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
+            let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
             
-            > \(rawRes.replacingOccurrences(of: "\n", with: "\n> "))
-            """
-            self.resultText = formattedRes
-            // 记录类型标记为 'loc'
-            finalizeCommand(type: "loc", input: word, output: formattedRes)
-        } else {
-            self.resultText = "No definition found in local dictionary."
-            self.isLoading = false
-        }
-    }
-    
-    @MainActor
-    private func performSmartDictionaryLookup(word: String) async {
-        self.resultText = ""
-        let key = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
-        let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
-        
-        let prompt = DictionaryService.generateSmartPrompt(for: word)
-        
-        var fullResponse = ""
-        
-        do {
-            for try await chunk in GeminiService.streamResponse(query: prompt, apiKey: key, model: model) {
-                self.resultText += chunk
-                fullResponse += chunk
+            // 调用 Service，传入闭包处理流式文本
+            let result = await DictionaryService.performSmartLookup(
+                word: word,
+                apiKey: key,
+                model: model,
+                onStream: { [weak self] chunk in
+                    self?.resultText += chunk
+                }
+            )
+            
+            // 根据最终结果状态处理 UI 标记和历史记录
+            switch result {
+            case .aiSuccess(let fullText):
+                self.isAIResponse = true
+                finalizeCommand(type: "def", input: word, output: fullText)
+                
+            case .localSuccess(let fullText):
+                self.isAIResponse = false // 本地结果不显示 AI 按钮
+                finalizeCommand(type: "loc", input: word, output: fullText)
+                
+            case .failure(_):
+                self.isLoading = false
+                // 失败时，文字已经在 onStream 中显示了，这里只需停止 loading
             }
-            
-            self.isAIResponse = true
-            // 记录类型标记为 'AI-Def' 或 'Auto'
-            finalizeCommand(type: "def", input: word, output: fullResponse)
-            
-        } catch {
-            // 连不到网或 API 错误，回退到本地词典
-            self.resultText = "⚠️ Network unavailable. Using local dictionary...\n\n"
-            performLocalDictionaryLookup(word: word)
         }
-    }
 
     @MainActor
     private func triggerOpenSettings() {
@@ -221,8 +228,7 @@ class AppState {
     
     @MainActor
     private func showHelp() {
-        let py = UserDefaults.standard.string(forKey: AppStorageKey.aliasPy) ?? "py"
-        
+    
         let helpText = """
         ### 🚀 Commander AI Mode
 
@@ -234,8 +240,7 @@ class AppState {
         #### Special Commands
         | Command | Description |
         | :--- | :--- |
-        | `\(py) <code>` | Execute Python Code |
-        | `history` | View Command History |
+        | `hist` | View Command History |
         | `set` | Open Settings |
         | `quit` | Quit Application |
         | `help` | Show this message |

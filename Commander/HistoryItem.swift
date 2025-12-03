@@ -17,6 +17,7 @@ enum AppStorageKey {
     static let geminiModel = "geminiModel"
     static let geminiProxy = "geminiProxy" // [新增] 代理地址 Key
     static let pythonPath = "pythonPath"
+    static let scriptDirectory = "scriptDirectory"
     
     static let aliasDef = "aliasDef"
     static let aliasAsk = "aliasAsk"

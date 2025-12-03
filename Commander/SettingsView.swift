@@ -1,6 +1,7 @@
 import SwiftUI
 import KeyboardShortcuts
 import ServiceManagement
+internal import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @AppStorage(AppStorageKey.launchAtLogin) var launchAtLogin = false
@@ -16,6 +17,12 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.aliasSer) var aliasSer = "ser"
     @AppStorage(AppStorageKey.pythonPath) var pythonPath = "/usr/bin/python3"
     @AppStorage(AppStorageKey.aliasPy) var aliasPy = "py"
+    
+    // [新增] 脚本目录路径
+        @AppStorage(AppStorageKey.scriptDirectory) var scriptDirectory = ""
+        
+        // [新增] 用于控制文件夹选择器显示
+        @State private var showFolderImporter = false
     
     var body: some View {
         TabView {
@@ -54,23 +61,46 @@ struct SettingsView: View {
                     Text("Behavior")
                 }
                 Section {
-                                    // Python 路径设置
+                                    // Python Path
                                     VStack(alignment: .leading) {
                                         Text("Python Interpreter Path")
                                         TextField("/usr/bin/python3", text: $pythonPath)
                                             .textFieldStyle(.roundedBorder)
-                                        Text("Usually `/usr/bin/python3` or `/opt/homebrew/bin/python3`")
+                                    }
+                                    
+                                    // [新增] Script Directory 设置
+                                    VStack(alignment: .leading) {
+                                        Text("Script Directory")
+                                        HStack {
+                                            TextField("Path to your scripts folder", text: $scriptDirectory)
+                                                .textFieldStyle(.roundedBorder)
+                                            
+                                            Button(action: { showFolderImporter = true }) {
+                                                Image(systemName: "folder")
+                                            }
+                                        }
+                                        Text("Place bash/zsh scripts here to run them by name via 'run <name>'")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
-                }header:{
-                    Text("Environment")
-                }
-            }
-            // 这里使用 .formStyle(.grouped) 让 macOS 自动处理内边距和居中
-            .formStyle(.grouped)
-            .tabItem { Label("General", systemImage: "gear") }
-            
+                                } header: {
+                                    Text("Environment")
+                                }
+                            }
+                            .formStyle(.grouped)
+                            .tabItem { Label("General", systemImage: "gear") }
+                            // 文件导入器逻辑
+                            .fileImporter(
+                                isPresented: $showFolderImporter,
+                                allowedContentTypes: [.folder],
+                                allowsMultipleSelection: false
+                            ) { result in
+                                if let url = try? result.get().first {
+                                    // 必须请求安全访问权限
+                                    let _ = url.startAccessingSecurityScopedResource()
+                                    scriptDirectory = url.path
+                                }
+                            }
             // --- Tab 2: AI & Network ---
             Form {
                 Section(header: Text("Credentials")) {
@@ -123,7 +153,7 @@ struct SettingsView: View {
             .tabItem { Label("Aliases", systemImage: "keyboard") }
         }
         // 调整设置窗口大小，使其看起来更宽敞，并允许适度拉伸
-        .frame(width: 500, height: 350)
+        .frame(width: 500, height: 400)
         .padding()
     }
     
