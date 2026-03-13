@@ -5,6 +5,7 @@ import Splash
 struct ContentView: View {
     @Bindable var appState: AppState
     @FocusState private var isInputFocused: Bool
+    @AppStorage(AppStorageKey.multilineInput) private var multilineInput = false
     
     @Environment(\.openSettings) private var openSettings
     // 1. 引入环境变量监听当前的系统外观模式 (Dark/Light)
@@ -13,20 +14,61 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             // --- 1. 顶部输入区域 ---
-            HStack {
+            HStack(alignment: multilineInput ? .top : .center, spacing: 10) {
                 Image(systemName: "terminal")
                     .foregroundColor(.secondary)
                 
-                TextField("Type 'help'...", text: $appState.query)
-                    .textFieldStyle(.plain)
-                    .font(.title3)
-                    .focused($isInputFocused)
-                    .onSubmit {
+                if multilineInput {
+                    ZStack(alignment: .topLeading) {
+                        if appState.query.isEmpty {
+                            Text("Type here... (Cmd+Enter to send)")
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 8)
+                                .padding(.leading, 4)
+                        }
+
+                        TextEditor(text: $appState.query)
+                            .font(.title3)
+                            .scrollContentBackground(.hidden)
+                            .focused($isInputFocused)
+                            .onExitCommand {
+                                appState.reset()
+                            }
+                    }
+                    .frame(minHeight: 72, maxHeight: 120)
+                } else {
+                    TextField("Type 'help'...", text: $appState.query)
+                        .textFieldStyle(.plain)
+                        .font(.title3)
+                        .focused($isInputFocused)
+                        .onSubmit {
+                            appState.executeCommand()
+                        }
+                        .onExitCommand {
+                            appState.reset()
+                        }
+                }
+
+                VStack(spacing: 8) {
+                    Button(action: {
+                        multilineInput.toggle()
+                        isInputFocused = true
+                    }) {
+                        Image(systemName: multilineInput ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(multilineInput ? "Switch to single-line input" : "Switch to multi-line input")
+
+                    Button(action: {
                         appState.executeCommand()
+                    }) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title3)
                     }
-                    .onExitCommand {
-                        appState.reset()
-                    }
+                    .buttonStyle(.borderless)
+                    .help(multilineInput ? "Send (Cmd+Enter)" : "Send")
+                    .keyboardShortcut(.return, modifiers: [.command])
+                }
                 
                 if appState.isLoading {
                     ProgressView().controlSize(.small)

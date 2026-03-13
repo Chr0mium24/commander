@@ -12,6 +12,7 @@ enum AppStorageKey {
     static let launchAtLogin = "launchAtLogin"
     static let historyLimit = "historyLimit"
     static let autoCopy = "autoCopy"
+    static let multilineInput = "multilineInput"
     
     static let geminiKey = "geminiApiKey"
     static let geminiModel = "geminiModel"
