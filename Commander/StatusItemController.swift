@@ -46,7 +46,10 @@ final class StatusItemController: NSObject {
         }
 
         if event.type == .rightMouseUp {
-            statusItem?.popUpMenu(contextMenu)
+            sender.menu = contextMenu
+            
+            sender.performClick(nil)
+            sender.menu = nil
             return
         }
 

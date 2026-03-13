@@ -152,12 +152,6 @@ struct PythonCommandService {
     private static let engineInterpreter = "/usr/bin/python3"
 
     static func execute(query: String, settings: CommandEngineSettings) async -> CommandEngineResponse {
-        await Task.detached {
-            run(query: query, settings: settings)
-        }.value
-    }
-
-    private static func run(query: String, settings: CommandEngineSettings) -> CommandEngineResponse {
         guard let scriptPath = resolveEngineScriptPath() else {
             return .failure("Command engine script not found: python/commander_engine.py")
         }
@@ -170,37 +164,24 @@ struct PythonCommandService {
             return .failure("Failed to encode command request")
         }
 
-        let process = Process()
-        let outputPipe = Pipe()
+        let interpreter = engineInterpreter
+        let runResult = await Task.detached {
+            PythonEngineRunner.run(interpreter: interpreter, scriptPath: scriptPath, payload: payload)
+        }.value
 
-        process.executableURL = URL(fileURLWithPath: engineInterpreter)
-        process.arguments = [scriptPath, payload]
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
-
-        do {
-            try process.run()
-            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-            guard !raw.isEmpty else {
-                return .failure("Command engine returned empty output")
-            }
-
+        switch runResult {
+        case .failure(let message):
+            return .failure(message)
+        case .success(let raw):
             guard let rawData = raw.data(using: .utf8) else {
                 return .failure("Command engine returned non-UTF8 output")
             }
 
-            let decoder = JSONDecoder()
-
             do {
-                return try decoder.decode(CommandEngineResponse.self, from: rawData)
+                return try JSONDecoder().decode(CommandEngineResponse.self, from: rawData)
             } catch {
                 return .failure("Failed to decode command engine response:\n\(raw)")
             }
-        } catch {
-            return .failure("Failed to run command engine: \(error.localizedDescription)")
         }
     }
 
@@ -231,5 +212,38 @@ struct PythonCommandService {
         }
 
         return candidates.first(where: { fileManager.fileExists(atPath: $0) })
+    }
+}
+
+private enum EngineRunResult: Sendable {
+    case success(String)
+    case failure(String)
+}
+
+private enum PythonEngineRunner {
+    nonisolated static func run(interpreter: String, scriptPath: String, payload: String) -> EngineRunResult {
+        let process = Process()
+        let outputPipe = Pipe()
+
+        process.executableURL = URL(fileURLWithPath: interpreter)
+        process.arguments = [scriptPath, payload]
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+
+            let raw = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !raw.isEmpty else {
+                return .failure("Command engine returned empty output")
+            }
+
+            return .success(raw)
+        } catch {
+            return .failure("Failed to run command engine: \(error.localizedDescription)")
+        }
     }
 }

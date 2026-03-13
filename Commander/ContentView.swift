@@ -6,10 +6,16 @@ struct ContentView: View {
     @Bindable var appState: AppState
     @FocusState private var isInputFocused: Bool
     @AppStorage(AppStorageKey.multilineInput) private var multilineInput = false
+    @State private var outputBaseHeight: CGFloat = 360
+    @GestureState private var outputDragTranslation: CGFloat = 0
     
     @Environment(\.openSettings) private var openSettings
     // 1. 引入环境变量监听当前的系统外观模式 (Dark/Light)
     @Environment(\.colorScheme) private var colorScheme
+    
+    private var outputHeight: CGFloat {
+        min(max(200, outputBaseHeight + outputDragTranslation), 720)
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -28,18 +34,18 @@ struct ContentView: View {
                         }
 
                         TextEditor(text: $appState.query)
-                            .font(.title3)
+                            .font(.body)
                             .scrollContentBackground(.hidden)
                             .focused($isInputFocused)
                             .onExitCommand {
                                 appState.reset()
                             }
                     }
-                    .frame(minHeight: 72, maxHeight: 120)
+                    .frame(minHeight: 62, maxHeight: 110)
                 } else {
                     TextField("Type 'help'...", text: $appState.query)
                         .textFieldStyle(.plain)
-                        .font(.title3)
+                        .font(.body)
                         .focused($isInputFocused)
                         .onSubmit {
                             appState.executeCommand()
@@ -49,7 +55,7 @@ struct ContentView: View {
                         }
                 }
 
-                VStack(spacing: 8) {
+                HStack(spacing: 8) {
                     Button(action: {
                         multilineInput.toggle()
                         isInputFocused = true
@@ -74,7 +80,8 @@ struct ContentView: View {
                     ProgressView().controlSize(.small)
                 }
             }
-            .padding()
+            .padding(.horizontal, 12)
+            .padding(.vertical, multilineInput ? 10 : 6)
             // 2. 修改背景色：使用 primary.opacity 让其在黑白模式下都能自动适配
             // 浅色模式下是淡淡的灰，深色模式下是淡淡的白
             .background(Color.primary.opacity(0.05))
@@ -85,6 +92,25 @@ struct ContentView: View {
                 Divider()
                 
                 VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Spacer()
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.35))
+                            .frame(width: 42, height: 5)
+                        Spacer()
+                    }
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 2)
+                            .updating($outputDragTranslation) { value, state, _ in
+                                state = value.translation.height
+                            }
+                            .onEnded { value in
+                                outputBaseHeight = min(max(200, outputBaseHeight + value.translation.height), 720)
+                            }
+                    )
+
                     if appState.showHistoryView {
                         HistoryView(appState: appState)
                     } else {
@@ -143,7 +169,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                .frame(height: 400)
+                .frame(height: outputHeight)
             }
         }
         .frame(width: 500)
