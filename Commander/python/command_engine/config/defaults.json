@@ -1,0 +1,18 @@
+{
+  "aliasPy": "py",
+  "aliasDef": "def",
+  "aliasAsk": "ask",
+  "aliasSer": "ser",
+  "pythonPath": "/usr/bin/python3",
+  "scriptDirectory": "",
+  "pluginDirectory": "",
+  "geminiApiKey": "",
+  "geminiModel": "gemini-1.5-flash",
+  "geminiProxy": "",
+  "aiProvider": "",
+  "aiBaseURL": "",
+  "aiApiKey": "",
+  "aiModel": "",
+  "historyLimit": 50,
+  "autoCopy": false
+}

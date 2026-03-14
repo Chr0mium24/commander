@@ -88,9 +88,13 @@ class AppState {
         terminalSessions = []
     }
 
-    func executeCommand() {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    func executeCommand(queryOverride: String? = nil) {
+        let sourceQuery = queryOverride ?? query
+        let trimmed = sourceQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if queryOverride != nil {
+            query = trimmed
+        }
         
         let now = Date()
         guard now.timeIntervalSince(lastSubmitAt) >= minSubmitInterval else { return }
@@ -607,6 +611,86 @@ class AppState {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    @MainActor
+    func runGeneratedCode(language: String, code: String) {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else { return }
+
+        guard let command = buildRunCommandForGeneratedCode(language: language, code: trimmedCode) else {
+            resultText = "Unsupported code language. Use python/bash/sh/zsh."
+            isLoading = false
+            return
+        }
+
+        executeCommand(queryOverride: command)
+    }
+
+    private func buildRunCommandForGeneratedCode(language: String, code: String) -> String? {
+        let normalizedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let resolvedLanguage: String
+
+        if normalizedLanguage.isEmpty {
+            if code.hasPrefix("#!/bin/bash") || code.hasPrefix("#!/usr/bin/env bash") {
+                resolvedLanguage = "bash"
+            } else if code.hasPrefix("#!/bin/zsh") || code.hasPrefix("#!/usr/bin/env zsh") {
+                resolvedLanguage = "zsh"
+            } else if code.hasPrefix("#!/usr/bin/python") || code.hasPrefix("#!/usr/bin/env python") {
+                resolvedLanguage = "python"
+            } else {
+                return nil
+            }
+        } else {
+            resolvedLanguage = normalizedLanguage
+        }
+
+        switch resolvedLanguage {
+        case "python", "py":
+            guard let fileURL = writeGeneratedScript(code: code, fileExtension: "py") else {
+                return nil
+            }
+            let interpreter = UserDefaults.standard.string(forKey: AppStorageKey.pythonPath) ?? "/usr/bin/python3"
+            return "run \(shellQuote(interpreter)) \(shellQuote(fileURL.path))"
+
+        case "bash", "sh", "shell":
+            guard let fileURL = writeGeneratedScript(code: code, fileExtension: "sh") else {
+                return nil
+            }
+            return "run /bin/bash \(shellQuote(fileURL.path))"
+
+        case "zsh":
+            guard let fileURL = writeGeneratedScript(code: code, fileExtension: "sh") else {
+                return nil
+            }
+            return "run /bin/zsh \(shellQuote(fileURL.path))"
+
+        default:
+            return nil
+        }
+    }
+
+    private func writeGeneratedScript(code: String, fileExtension: String) -> URL? {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory.appendingPathComponent("CommanderGenerated", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
+            try code.write(to: fileURL, atomically: true, encoding: .utf8)
+            try fileManager.setAttributes([.posixPermissions: NSNumber(value: 0o700)], ofItemAtPath: fileURL.path)
+
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3600) {
+                try? fileManager.removeItem(at: fileURL)
+            }
+
+            return fileURL
+        } catch {
+            return nil
+        }
+    }
+
+    private func shellQuote(_ input: String) -> String {
+        "'" + input.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
     private func historyFileURL() -> URL {

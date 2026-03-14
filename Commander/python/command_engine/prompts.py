@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import re
 
+from .constants import SETTING_SCHEMA
+from .plugin_registry import CommandHelpEntry
+from .utils import camel_to_snake
+
 
 def dictionary_prompt(word: str) -> str:
     return (
@@ -24,7 +28,27 @@ def is_single_word(text: str) -> bool:
     return re.fullmatch(r"[A-Za-z][A-Za-z'\-]*", text) is not None
 
 
-def help_text(aliases: dict[str, str]) -> str:
+def help_text(aliases: dict[str, str], commands: list[CommandHelpEntry]) -> str:
+    key_list = sorted(
+        {
+            camel_to_snake(str(item.get("key", "")))
+            for item in SETTING_SCHEMA
+            if item.get("key")
+        }
+    )
+    keys_line = ", ".join(f"`{key}`" for key in key_list)
+
+    command_rows: list[str] = []
+    for item in commands:
+        if item.command in {"help", "hist", "quit", "scripts", "set"}:
+            continue
+        usage = item.usage or item.command
+        suffix = f" ({item.description})" if item.description else ""
+        alias_part = f" aliases: {', '.join(f'`{alias}`' for alias in item.aliases)}" if item.aliases else ""
+        command_rows.append(f"- `{usage}`{suffix}{alias_part}")
+
+    dynamic_block = "\n".join(command_rows) if command_rows else "- None"
+
     return f"""### Commander Python Engine
 
 Default behavior:
@@ -38,15 +62,20 @@ Commands:
 - `set` open settings window
 - `set get <key>` read one setting
 - `set <key> <value>` update one setting
+- `set list` print full schema
+- `set file` print config/plugin paths
 - `run <command>` run and capture output directly
 - `run <command> &` run inside process panel (interactive/stop-able)
 - `{aliases['py']} <code>` run python snippet
 - `{aliases['def']} <word>` force dictionary mode
 - `{aliases['ask']} <question>` force AI mode
 - `{aliases['ser']} <term>` open Google search
+- `plugins` show plugin load status
 - `quit` exit app
 
 Settable keys:
-`alias_py`, `alias_def`, `alias_ask`, `alias_ser`, `python_path`, `script_dir`,
-`gemini_key`, `gemini_model`, `gemini_proxy`, `history_limit`, `auto_copy`
+{keys_line}
+
+Plugin commands:
+{dynamic_block}
 """

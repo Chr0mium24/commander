@@ -40,6 +40,10 @@ struct ContentView: View {
         appState.terminalSessions.filter { $0.isRunning }
     }
 
+    private var detectedCodeBlocks: [DetectedCodeBlock] {
+        MarkdownCodeBlockExtractor.extract(from: appState.resultText)
+    }
+
     private var sanitizedResultText: String {
         let scalars = appState.resultText.unicodeScalars.filter { scalar in
             if scalar == "\n" || scalar == "\r" || scalar == "\t" {
@@ -302,6 +306,49 @@ struct ContentView: View {
                                         .buttonStyle(.bordered)
                                     }
                                 }
+
+                                if appState.isAIResponse && !appState.isLoading && !detectedCodeBlocks.isEmpty {
+                                    Divider()
+                                        .padding(.vertical, 8)
+
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("Code Blocks")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+
+                                        ForEach(detectedCodeBlocks) { block in
+                                            HStack(spacing: 8) {
+                                                Text(block.title)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+
+                                                Spacer()
+
+                                                Button("Copy Code") {
+                                                    appState.copyToClipboard(block.code)
+                                                }
+                                                .font(.caption)
+                                                .buttonStyle(.bordered)
+
+                                                if isRunnableCodeLanguage(block.language) {
+                                                    Button("Run") {
+                                                        appState.runGeneratedCode(
+                                                            language: block.language,
+                                                            code: block.code
+                                                        )
+                                                    }
+                                                    .font(.caption)
+                                                    .buttonStyle(.borderedProminent)
+                                                }
+                                            }
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 8)
+                                            .background(Color.primary.opacity(0.04))
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        }
+                                    }
+                                }
                             }
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -444,6 +491,11 @@ struct ContentView: View {
             }
     }
 
+    private func isRunnableCodeLanguage(_ language: String) -> Bool {
+        let normalized = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["python", "py", "bash", "sh", "zsh", "shell"].contains(normalized)
+    }
+
     @ViewBuilder
     private func terminalSessionCard(_ session: TerminalSessionItem) -> some View {
         VStack(spacing: 0) {
@@ -510,6 +562,72 @@ struct ContentView: View {
         }
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private struct DetectedCodeBlock: Identifiable {
+    let id: Int
+    let language: String
+    let code: String
+    let preview: String
+
+    var title: String {
+        let languageText = language.isEmpty ? "code" : language
+        if preview.isEmpty {
+            return languageText
+        }
+        return "\(languageText): \(preview)"
+    }
+}
+
+private enum MarkdownCodeBlockExtractor {
+    private static let pattern = "```([A-Za-z0-9_+-]*)[ \\t]*\\n([\\s\\S]*?)\\n?```"
+
+    static func extract(from markdown: String) -> [DetectedCodeBlock] {
+        guard !markdown.isEmpty else { return [] }
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return []
+        }
+
+        let fullRange = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
+        let matches = regex.matches(in: markdown, options: [], range: fullRange)
+        var blocks: [DetectedCodeBlock] = []
+        blocks.reserveCapacity(matches.count)
+
+        for (index, match) in matches.enumerated() {
+            guard
+                let langRange = Range(match.range(at: 1), in: markdown),
+                let codeRange = Range(match.range(at: 2), in: markdown)
+            else {
+                continue
+            }
+
+            let language = String(markdown[langRange]).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let code = String(markdown[codeRange]).trimmingCharacters(in: .newlines)
+            if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                continue
+            }
+
+            let firstLine = code.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? ""
+            let preview = firstLine.trimmingCharacters(in: .whitespaces)
+            let clippedPreview: String
+            if preview.count > 46 {
+                clippedPreview = String(preview.prefix(46)) + "..."
+            } else {
+                clippedPreview = preview
+            }
+
+            blocks.append(
+                DetectedCodeBlock(
+                    id: index,
+                    language: language,
+                    code: code,
+                    preview: clippedPreview
+                )
+            )
+        }
+
+        return blocks
     }
 }
 
