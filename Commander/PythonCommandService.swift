@@ -73,6 +73,7 @@ struct CommandEngineSettingSchemaItem: Decodable, Identifiable, Hashable {
     let type: String
     let label: String
     let group: String
+    let value: String
 
     var id: String { key }
 
@@ -82,6 +83,7 @@ struct CommandEngineSettingSchemaItem: Decodable, Identifiable, Hashable {
         case type
         case label
         case group
+        case value
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +93,23 @@ struct CommandEngineSettingSchemaItem: Decodable, Identifiable, Hashable {
         type = try container.decodeIfPresent(String.self, forKey: .type) ?? "string"
         label = try container.decodeIfPresent(String.self, forKey: .label) ?? key
         group = try container.decodeIfPresent(String.self, forKey: .group) ?? "general"
+        value = CommandEngineSettingSchemaItem.decodeValueString(from: container)
+    }
+
+    private static func decodeValueString(from container: KeyedDecodingContainer<CodingKeys>) -> String {
+        if let text = try? container.decode(String.self, forKey: .value) {
+            return text
+        }
+        if let intValue = try? container.decode(Int.self, forKey: .value) {
+            return String(intValue)
+        }
+        if let boolValue = try? container.decode(Bool.self, forKey: .value) {
+            return boolValue ? "true" : "false"
+        }
+        if let doubleValue = try? container.decode(Double.self, forKey: .value) {
+            return String(doubleValue)
+        }
+        return ""
     }
 }
 

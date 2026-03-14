@@ -35,6 +35,8 @@ struct SettingsView: View {
     @State private var dynamicStatusMessage = ""
     @State private var isDynamicLoading = false
     @State private var didLoadDynamicSchema = false
+    @State private var dynamicSearchText = ""
+    @State private var dynamicCollapsedGroups: Set<String> = []
 
     var body: some View {
         TabView {
@@ -249,6 +251,12 @@ struct SettingsView: View {
 
                     Spacer()
 
+                    Button("Copy Visible JSON") {
+                        copyVisibleDynamicSettingsJSON()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(filteredDynamicSchema.isEmpty)
+
                     Button("Reload Schema") {
                         Task {
                             await loadDynamicSchema(force: true)
@@ -256,6 +264,9 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.bordered)
                 }
+
+                TextField("Search label/key/group", text: $dynamicSearchText)
+                    .textFieldStyle(.roundedBorder)
 
                 if isDynamicLoading {
                     HStack(spacing: 8) {
@@ -274,9 +285,17 @@ struct SettingsView: View {
                 }
 
                 if let configPath = dynamicConfigPaths["user_config"], !configPath.isEmpty {
-                    Text("Config: \(configPath)")
+                    HStack(spacing: 8) {
+                        Text("Config: \(configPath)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Open") {
+                            openUserConfigFile()
+                        }
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
                 }
 
                 if dynamicSchema.isEmpty && !isDynamicLoading {
@@ -287,15 +306,33 @@ struct SettingsView: View {
 
                 ForEach(groupedDynamicSchema, id: \.group) { groupBlock in
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(groupBlock.group.capitalized)
-                            .font(.subheadline)
+                        HStack(spacing: 8) {
+                            Button(action: {
+                                toggleGroupCollapse(group: groupBlock.group)
+                            }) {
+                                Label(
+                                    groupBlock.group.capitalized,
+                                    systemImage: isGroupCollapsed(groupBlock.group) ? "chevron.right" : "chevron.down"
+                                )
+                            }
+                            .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
+                            .font(.subheadline)
 
-                        ForEach(groupBlock.items) { item in
-                            dynamicSettingRow(item)
-                                .padding(10)
-                                .background(Color.primary.opacity(0.04))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            Spacer()
+
+                            Text("\(groupBlock.items.count)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !isGroupCollapsed(groupBlock.group) {
+                            ForEach(groupBlock.items) { item in
+                                dynamicSettingRow(item)
+                                    .padding(10)
+                                    .background(Color.primary.opacity(0.04))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
                         }
                     }
                 }
@@ -371,7 +408,7 @@ struct SettingsView: View {
     }
 
     private var groupedDynamicSchema: [(group: String, items: [CommandEngineSettingSchemaItem])] {
-        let grouped = Dictionary(grouping: dynamicSchema) { item in
+        let grouped = Dictionary(grouping: filteredDynamicSchema) { item in
             item.group.isEmpty ? "general" : item.group.lowercased()
         }
         return grouped
@@ -386,6 +423,18 @@ struct SettingsView: View {
                 )
             }
             .sorted { $0.group.localizedCaseInsensitiveCompare($1.group) == .orderedAscending }
+    }
+
+    private var filteredDynamicSchema: [CommandEngineSettingSchemaItem] {
+        let keyword = dynamicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !keyword.isEmpty else { return dynamicSchema }
+
+        return dynamicSchema.filter { item in
+            item.key.lowercased().contains(keyword)
+                || item.commandKey.lowercased().contains(keyword)
+                || item.label.lowercased().contains(keyword)
+                || item.group.lowercased().contains(keyword)
+        }
     }
 
     @ViewBuilder
@@ -451,6 +500,10 @@ struct SettingsView: View {
     }
 
     private func initialValue(for item: CommandEngineSettingSchemaItem) -> String {
+        if !item.value.isEmpty {
+            return item.value
+        }
+
         let defaults = UserDefaults.standard
         let type = normalizedDynamicType(item.type)
 
@@ -479,6 +532,18 @@ struct SettingsView: View {
         if lowered == "boolean" { return "bool" }
         if lowered == "integer" { return "int" }
         return lowered
+    }
+
+    private func isGroupCollapsed(_ group: String) -> Bool {
+        dynamicCollapsedGroups.contains(group)
+    }
+
+    private func toggleGroupCollapse(group: String) {
+        if dynamicCollapsedGroups.contains(group) {
+            dynamicCollapsedGroups.remove(group)
+        } else {
+            dynamicCollapsedGroups.insert(group)
+        }
     }
 
     private func boolFromString(_ value: String) -> Bool {
@@ -564,14 +629,36 @@ struct SettingsView: View {
 
         dynamicSchema = response.settingSchema.filter { !$0.key.isEmpty }
         dynamicConfigPaths = response.configPaths
-        if force || dynamicValues.isEmpty {
-            var initial: [String: String] = [:]
-            for item in dynamicSchema {
-                initial[item.key] = initialValue(for: item)
+        var mergedValues = dynamicValues
+        for item in dynamicSchema {
+            if force || mergedValues[item.key] == nil {
+                mergedValues[item.key] = initialValue(for: item)
             }
-            dynamicValues = initial
         }
+        dynamicValues = mergedValues
         dynamicStatusMessage = response.output
         didLoadDynamicSchema = true
+    }
+
+    private func copyVisibleDynamicSettingsJSON() {
+        var payload: [String: String] = [:]
+        for item in filteredDynamicSchema {
+            payload[item.key] = dynamicValues[item.key] ?? initialValue(for: item)
+        }
+
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: payload,
+                options: [.prettyPrinted, .sortedKeys]
+            ),
+            let text = String(data: data, encoding: .utf8)
+        else {
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        dynamicStatusMessage = "Copied visible dynamic settings as JSON."
     }
 }

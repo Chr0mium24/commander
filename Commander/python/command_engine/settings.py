@@ -14,7 +14,7 @@ def handle_set_command(
     response: dict[str, Any],
     setting_schema: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    normalized_schema = normalize_setting_schema(setting_schema)
+    normalized_schema = normalize_setting_schema(setting_schema, settings=settings)
     schema_key_map = build_schema_key_map(normalized_schema)
 
     stripped = content.strip()
@@ -115,7 +115,11 @@ def handle_set_command(
     return response
 
 
-def normalize_setting_schema(schema: list[dict[str, str]] | None) -> list[dict[str, str]]:
+def normalize_setting_schema(
+    schema: list[dict[str, str]] | None,
+    *,
+    settings: dict[str, Any],
+) -> list[dict[str, str]]:
     source = schema if schema is not None else SETTING_SCHEMA
     normalized: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -130,6 +134,7 @@ def normalize_setting_schema(schema: list[dict[str, str]] | None) -> list[dict[s
         group = str(item.get("group", "general")).strip() or "general"
         label = str(item.get("label", storage_key)).strip() or storage_key
         command_key = camel_to_snake(storage_key)
+        value = coalesce(settings, storage_key, "")
         normalized.append(
             {
                 "key": storage_key,
@@ -137,11 +142,20 @@ def normalize_setting_schema(schema: list[dict[str, str]] | None) -> list[dict[s
                 "type": value_type,
                 "group": group,
                 "label": label,
+                "value": stringify_setting_value(value),
             }
         )
 
     normalized.sort(key=lambda row: row["command_key"])
     return normalized
+
+
+def stringify_setting_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def build_schema_key_map(schema: list[dict[str, str]]) -> dict[str, tuple[str, str]]:
