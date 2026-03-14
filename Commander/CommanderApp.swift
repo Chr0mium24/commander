@@ -1,5 +1,4 @@
 import SwiftUI
-import MenuBarExtraAccess
 
 @main
 struct CommanderApp: App {
@@ -10,6 +9,7 @@ struct CommanderApp: App {
     init() {
         let appState = AppState()
         let windowController = CommanderWindowController(appState: appState)
+        let statusItemController = StatusItemController()
         appState.windowToggleHandler = { [weak windowController] in
             Task { @MainActor in
                 windowController?.toggleWindow()
@@ -25,28 +25,13 @@ struct CommanderApp: App {
                 windowController?.hideWindow()
             }
         }
+        statusItemController.setup(appState: appState, windowController: windowController)
         _appState = State(initialValue: appState)
+        _statusItemController = State(initialValue: statusItemController)
         _windowController = State(initialValue: windowController)
     }
     
     var body: some Scene {
-        MenuBarExtra("Commander", systemImage: "terminal") {
-            Button("Open Commander") {
-                appState.openWindowFromMenu()
-            }
-            Button("Settings...") {
-                appState.openSettingsFromMenu()
-            }
-            Divider()
-            Button("Quit Commander") {
-                appState.quitFromMenu()
-            }
-        }
-        .menuBarExtraStyle(.menu)
-        .menuBarExtraAccess(isPresented: .constant(false)) { statusItem in
-            statusItemController.configure(statusItem: statusItem, appState: appState, windowController: windowController)
-        }
-
         Settings {
             SettingsView()
         }

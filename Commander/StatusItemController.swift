@@ -2,7 +2,7 @@ import AppKit
 
 final class StatusItemController: NSObject {
     private weak var appState: AppState?
-    private weak var statusItem: NSStatusItem?
+    private var statusItem: NSStatusItem?
     private weak var windowController: CommanderWindowController?
     private var isShowingContextMenu = false
 
@@ -22,27 +22,33 @@ final class StatusItemController: NSObject {
         return menu
     }()
 
-    func configure(statusItem: NSStatusItem, appState: AppState, windowController: CommanderWindowController) {
-        self.statusItem = statusItem
+    func setup(appState: AppState, windowController: CommanderWindowController) {
         self.appState = appState
         self.windowController = windowController
 
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusItem = statusItem
+        statusItem.menu = nil
+
         guard let button = statusItem.button else { return }
+        button.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: "Commander")
+        button.imagePosition = .imageOnly
         button.target = self
         button.action = #selector(handleStatusItemClick(_:))
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        button.sendAction(on: [.leftMouseDown, .rightMouseDown])
     }
 
     @objc
     private func handleStatusItemClick(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else {
             Task { @MainActor in
-                self.appState?.openWindowFromMenu()
+                self.windowController?.toggleWindow(anchorButton: sender)
             }
             return
         }
 
-        if event.type == .rightMouseUp {
+        let isRightClick = event.buttonNumber == 1 || event.type == .rightMouseDown || event.type == .rightMouseUp
+        if isRightClick {
             guard !isShowingContextMenu else { return }
             isShowingContextMenu = true
             let menuOrigin = NSPoint(x: 0, y: sender.bounds.maxY + 4)

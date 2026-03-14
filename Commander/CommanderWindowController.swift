@@ -10,9 +10,24 @@ private final class CommanderWindow: NSWindow {
 final class CommanderWindowController: NSObject, NSWindowDelegate {
     private weak var appState: AppState?
     private var window: CommanderWindow?
+    private var resignObserver: NSObjectProtocol?
 
     init(appState: AppState) {
         self.appState = appState
+        super.init()
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            self?.hideWindow()
+        }
+    }
+
+    deinit {
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+        }
     }
 
     func toggleWindow(anchorButton: NSStatusBarButton? = nil) {
@@ -46,6 +61,14 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
         appState?.isWindowPresented = false
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        hideWindow()
+    }
+
+    func windowDidResignMain(_ notification: Notification) {
+        hideWindow()
+    }
+
     private func ensureWindow(appState: AppState) -> CommanderWindow {
         if let window {
             return window
@@ -53,7 +76,7 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
 
         let hostingView = NSHostingView(rootView: ContentView(appState: appState))
         let frame = NSRect(x: 0, y: 0, width: 560, height: 520)
-        let styleMask: NSWindow.StyleMask = [.titled, .closable, .resizable, .fullSizeContentView]
+        let styleMask: NSWindow.StyleMask = [.borderless, .resizable]
         let window = CommanderWindow(
             contentRect: frame,
             styleMask: styleMask,
@@ -62,17 +85,19 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
         )
 
         window.contentView = hostingView
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
+        window.level = .normal
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 460, height: 300)
         window.delegate = self
         window.setFrameAutosaveName("CommanderMainWindow")
-
-        window.standardWindowButton(.closeButton)?.isHidden = true
-        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        window.standardWindowButton(.zoomButton)?.isHidden = true
+        hostingView.wantsLayer = true
+        hostingView.layer?.cornerRadius = 8
+        hostingView.layer?.cornerCurve = .continuous
+        hostingView.layer?.masksToBounds = true
 
         self.window = window
         return window
@@ -84,19 +109,18 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
             let buttonWindow = button.window
         else { return }
 
-        let localRect = button.convert(button.bounds, to: nil)
-        let screenRect = buttonWindow.convertToScreen(localRect)
+        let anchorRect = buttonWindow.frame
         guard let screen = buttonWindow.screen ?? NSScreen.main else { return }
 
         var frame = window.frame
         let visible = screen.visibleFrame
-        let spacing: CGFloat = 8
+        let spacing: CGFloat = 6
 
-        let desiredX = screenRect.midX - (frame.width / 2)
+        let desiredX = anchorRect.midX - (frame.width / 2)
         let maxX = visible.maxX - frame.width
         frame.origin.x = min(max(desiredX, visible.minX), maxX)
 
-        let desiredTop = screenRect.minY - spacing
+        let desiredTop = anchorRect.minY - spacing
         frame.origin.y = max(visible.minY, desiredTop - frame.height)
 
         window.setFrame(frame, display: false)

@@ -44,8 +44,9 @@ struct ContentView: View {
                 outputSection
             }
         }
-        .frame(minWidth: 500, maxWidth: .infinity, minHeight: 220, maxHeight: .infinity)
+        .frame(minWidth: 500, maxWidth: .infinity, minHeight: 220, maxHeight: .infinity, alignment: .topLeading)
         .background(.ultraThinMaterial) // 保持毛玻璃效果
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onAppear {
             inputText = appState.query
             isInputFocused = true
@@ -234,9 +235,10 @@ struct ContentView: View {
                                         .frame(width: 42, height: 5)
                                     Spacer()
                                 }
+                                .frame(height: 20)
                                 .padding(.top, 8)
                                 .contentShape(Rectangle())
-                                .gesture(processResizeGesture())
+                                .highPriorityGesture(processResizeGesture())
 
                                 Text("Processes")
                                     .font(.caption)
