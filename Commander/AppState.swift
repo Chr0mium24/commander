@@ -10,6 +10,8 @@ extension KeyboardShortcuts.Name {
 struct TerminalSessionItem: Identifiable, Equatable {
     let id: UUID
     let command: String
+    let historyType: String
+    let historyInput: String
     var outputData: Data
     var isRunning: Bool
     var runInBackground: Bool
@@ -34,6 +36,8 @@ class AppState {
     private var activeExecutionID: UUID = UUID()
     private var activeCommandTask: Task<Void, Never>?
     private var shellSessions: [UUID: ShellSession] = [:]
+    private var terminalTerminators: [UUID: () -> Void] = [:]
+    private var interruptedTerminalSessions: Set<UUID> = []
     private var lastSubmitAt: Date = .distantPast
 
     private let minSubmitInterval: TimeInterval = 0.20
@@ -134,11 +138,6 @@ class AppState {
         stopTerminalSession(sessionID)
     }
 
-    func sendTerminalData(sessionID: UUID, data: Data) {
-        guard shellSessions[sessionID] != nil else { return }
-        shellSessions[sessionID]?.sendData(data)
-    }
-
     func toggleTerminalSessionCollapsed(_ sessionID: UUID) {
         updateSession(sessionID) { session in
             session.isCollapsed.toggle()
@@ -146,14 +145,23 @@ class AppState {
     }
 
     func stopTerminalSession(_ sessionID: UUID) {
-        guard let shell = shellSessions[sessionID] else { return }
-        shell.terminate()
-        shellSessions[sessionID] = nil
-
-        updateSession(sessionID) { session in
-            session.isRunning = false
-            session.outputData.append(contentsOf: "\n[Interrupted]\n".utf8)
+        if let terminator = terminalTerminators[sessionID] {
+            interruptedTerminalSessions.insert(sessionID)
+            terminator()
+            return
         }
+
+        guard let shell = shellSessions[sessionID] else { return }
+        interruptedTerminalSessions.insert(sessionID)
+        shell.terminate()
+    }
+
+    func registerTerminalSessionController(sessionID: UUID, terminate: @escaping () -> Void) {
+        terminalTerminators[sessionID] = terminate
+    }
+
+    func completeTerminalSession(sessionID: UUID, exitCode: Int32?, transcript: String) {
+        finishTerminalSession(sessionID: sessionID, exitCode: exitCode, transcriptOverride: transcript)
     }
 
     private func beginExecution() -> UUID {
@@ -334,6 +342,8 @@ class AppState {
             TerminalSessionItem(
                 id: sessionID,
                 command: trimmed,
+                historyType: historyType,
+                historyInput: historyInput,
                 outputData: initialOutput,
                 isRunning: true,
                 runInBackground: runInBackground,
@@ -342,6 +352,10 @@ class AppState {
         )
         showHistoryView = false
         isLoading = false
+
+        guard runInBackground else {
+            return
+        }
 
         do {
             let shell = try ShellSession.start(
@@ -355,23 +369,7 @@ class AppState {
                 },
                 onExit: { [weak self] status in
                     guard let self else { return }
-                    self.shellSessions[sessionID] = nil
-                    self.updateSession(sessionID) { session in
-                        session.isRunning = false
-                        if status != 0 {
-                            session.outputData.append(contentsOf: "\n[Process exited with code \(status)]\n".utf8)
-                        }
-                    }
-
-                    let output = self.sessionByID(sessionID).map {
-                        String(decoding: $0.outputData, as: UTF8.self)
-                    }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    self.finalizeCommand(
-                        type: historyType,
-                        input: historyInput,
-                        output: output.isEmpty ? "Done (No Output)" : output
-                    )
-                    self.terminalSessions.removeAll { $0.id == sessionID }
+                    self.finishTerminalSession(sessionID: sessionID, exitCode: status, transcriptOverride: nil)
                 }
             )
             shellSessions[sessionID] = shell
@@ -384,8 +382,7 @@ class AppState {
             let fallbackOutput = sessionByID(sessionID).map {
                 String(decoding: $0.outputData, as: UTF8.self)
             } ?? "Failed to start process."
-            finalizeCommand(type: "run", input: historyInput, output: fallbackOutput)
-            terminalSessions.removeAll { $0.id == sessionID }
+            finishTerminalSession(sessionID: sessionID, exitCode: nil, transcriptOverride: fallbackOutput)
         }
     }
 
@@ -409,7 +406,44 @@ class AppState {
         for shell in shellSessions.values {
             shell.terminate()
         }
+        for terminate in terminalTerminators.values {
+            terminate()
+        }
         shellSessions.removeAll()
+        terminalTerminators.removeAll()
+        interruptedTerminalSessions.removeAll()
+    }
+
+    private func finishTerminalSession(sessionID: UUID, exitCode: Int32?, transcriptOverride: String?) {
+        guard let session = sessionByID(sessionID) else { return }
+
+        shellSessions[sessionID] = nil
+        terminalTerminators[sessionID] = nil
+
+        let interrupted = interruptedTerminalSessions.remove(sessionID) != nil
+        var output = (transcriptOverride ?? String(decoding: session.outputData, as: UTF8.self))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if interrupted {
+            if output.isEmpty {
+                output = "[Interrupted]"
+            } else if !output.contains("[Interrupted]") {
+                output += "\n[Interrupted]"
+            }
+        } else if let code = exitCode, code != 0 {
+            if output.isEmpty {
+                output = "[Process exited with code \(code)]"
+            } else {
+                output += "\n[Process exited with code \(code)]"
+            }
+        }
+
+        if output.isEmpty {
+            output = "Done (No Output)"
+        }
+
+        finalizeCommand(type: session.historyType, input: session.historyInput, output: output)
+        terminalSessions.removeAll { $0.id == sessionID }
     }
 
     private func extractDictionaryWord(from historyInput: String) -> String? {

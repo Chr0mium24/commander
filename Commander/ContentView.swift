@@ -333,9 +333,12 @@ struct ContentView: View {
                 } else {
                     SwiftTermSessionView(
                         sessionID: session.id,
-                        outputData: session.outputData,
-                        onSendData: { id, data in
-                            appState.sendTerminalData(sessionID: id, data: data)
+                        command: session.command,
+                        onRegisterTerminator: { id, terminate in
+                            appState.registerTerminalSessionController(sessionID: id, terminate: terminate)
+                        },
+                        onProcessTerminated: { id, exitCode, transcript in
+                            appState.completeTerminalSession(sessionID: id, exitCode: exitCode, transcript: transcript)
                         }
                     )
                     .frame(minHeight: 110, maxHeight: 240)
@@ -471,20 +474,26 @@ extension Splash.Theme {
 
 private struct SwiftTermSessionView: NSViewRepresentable {
     let sessionID: UUID
-    let outputData: Data
-    let onSendData: (UUID, Data) -> Void
+    let command: String
+    let onRegisterTerminator: (UUID, @escaping () -> Void) -> Void
+    let onProcessTerminated: (UUID, Int32?, String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(sessionID: sessionID, onSendData: onSendData)
+        Coordinator(
+            sessionID: sessionID,
+            command: command,
+            onRegisterTerminator: onRegisterTerminator,
+            onProcessTerminated: onProcessTerminated
+        )
     }
 
-    func makeNSView(context: Context) -> TerminalView {
-        let view = TerminalView(frame: .zero)
+    func makeNSView(context: Context) -> LocalProcessTerminalView {
+        let view = LocalProcessTerminalView(frame: .zero)
         view.configureNativeColors()
-        view.terminalDelegate = context.coordinator
         view.optionAsMetaKey = true
         view.allowMouseReporting = true
         view.caretViewTracksFocus = true
+        view.processDelegate = context.coordinator
         context.coordinator.terminalView = view
 
         let click = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.focusTerminalFromGesture(_:)))
@@ -492,23 +501,34 @@ private struct SwiftTermSessionView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: TerminalView, context: Context) {
+    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
         context.coordinator.sessionID = sessionID
+        context.coordinator.command = command
         context.coordinator.terminalView = nsView
+        context.coordinator.startProcessIfNeeded(on: nsView)
         context.coordinator.requestInitialFocusIfNeeded()
-        context.coordinator.apply(outputData: outputData, to: nsView)
     }
 
-    final class Coordinator: NSObject, TerminalViewDelegate {
+    final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
         var sessionID: UUID
-        private let onSendData: (UUID, Data) -> Void
-        private var consumedLength: Int = 0
-        fileprivate weak var terminalView: TerminalView?
+        var command: String
+        private let onRegisterTerminator: (UUID, @escaping () -> Void) -> Void
+        private let onProcessTerminated: (UUID, Int32?, String) -> Void
+        fileprivate weak var terminalView: LocalProcessTerminalView?
         private var hasRequestedInitialFocus = false
+        private var hasStartedProcess = false
+        private var hasReportedTermination = false
 
-        init(sessionID: UUID, onSendData: @escaping (UUID, Data) -> Void) {
+        init(
+            sessionID: UUID,
+            command: String,
+            onRegisterTerminator: @escaping (UUID, @escaping () -> Void) -> Void,
+            onProcessTerminated: @escaping (UUID, Int32?, String) -> Void
+        ) {
             self.sessionID = sessionID
-            self.onSendData = onSendData
+            self.command = command
+            self.onRegisterTerminator = onRegisterTerminator
+            self.onProcessTerminated = onProcessTerminated
         }
 
         func requestInitialFocusIfNeeded() {
@@ -525,40 +545,57 @@ private struct SwiftTermSessionView: NSViewRepresentable {
             terminalView.window?.makeFirstResponder(terminalView)
         }
 
-        func apply(outputData: Data, to terminal: TerminalView) {
-            if outputData.count < consumedLength {
-                consumedLength = 0
-                let reset: [UInt8] = [0x1B, 0x63]
-                terminal.feed(byteArray: reset[...])
+        func startProcessIfNeeded(on terminal: LocalProcessTerminalView) {
+            guard !hasStartedProcess else { return }
+            hasStartedProcess = true
+
+            let arguments = ["-lc", command]
+            terminal.startProcess(
+                executable: "/bin/zsh",
+                args: arguments,
+                environment: commandEnvironment(),
+                currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+            )
+
+            onRegisterTerminator(sessionID) { [weak terminal] in
+                terminal?.terminate()
             }
-
-            let total = outputData.count
-            guard total > consumedLength else { return }
-
-            let chunk = outputData[consumedLength..<total]
-            let bytes = Array(chunk)
-            terminal.feed(byteArray: bytes[...])
-            consumedLength = total
         }
 
-        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
-        func setTerminalTitle(source: TerminalView, title: String) {}
+        private func commandEnvironment() -> [String] {
+            var list = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
+            let env = ProcessInfo.processInfo.environment
+            let pathValue = env["PATH"] ?? "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+            list.append("PATH=\(pathValue)")
+            list.append("SWIFT_CTX=1")
+            if let home = env["HOME"] {
+                list.append("HOME=\(home)")
+            }
+            return list
+        }
+
+        private func captureTranscript(from source: TerminalView) -> String {
+            let active = String(decoding: source.terminal.getBufferAsData(kind: .active), as: UTF8.self)
+            let normal = String(decoding: source.terminal.getBufferAsData(kind: .normal), as: UTF8.self)
+            let alt = String(decoding: source.terminal.getBufferAsData(kind: .alt), as: UTF8.self)
+
+            let candidates = [active, normal, alt]
+            return candidates.max(by: { $0.count < $1.count }) ?? ""
+        }
+
+        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-        func scrolled(source: TerminalView, position: Double) {}
-        func bell(source: TerminalView) {}
-        func clipboardCopy(source: TerminalView, content: Data) {}
-        func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
-        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
-        func requestOpenLink(source: TerminalView, link: String, params: [String : String]) {
-            guard let url = URL(string: link) else { return }
-            NSWorkspace.shared.open(url)
-        }
+        func processTerminated(source: TerminalView, exitCode: Int32?) {
+            guard !hasReportedTermination else { return }
+            hasReportedTermination = true
+            let transcript = captureTranscript(from: source)
 
-        func send(source: TerminalView, data: ArraySlice<UInt8>) {
-            let payload = Data(data)
-            guard !payload.isEmpty else { return }
-            onSendData(sessionID, payload)
+            DispatchQueue.main.async { [sessionID, onProcessTerminated] in
+                onProcessTerminated(sessionID, exitCode, transcript)
+            }
         }
     }
 }
