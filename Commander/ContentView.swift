@@ -9,10 +9,6 @@ struct ContentView: View {
     @FocusState private var isInputFocused: Bool
     @AppStorage(AppStorageKey.multilineInput) private var multilineInput = false
     @State private var inputText: String = ""
-    @State private var contentBaseWidth: CGFloat = 500
-    @State private var outputBaseHeight: CGFloat = 360
-    @GestureState private var outputDragTranslation: CGFloat = 0
-    @GestureState private var outputHorizontalDragTranslation: CGFloat = 0
     @State private var processBaseHeight: CGFloat = 190
     @GestureState private var processDragTranslation: CGFloat = 0
     
@@ -24,16 +20,8 @@ struct ContentView: View {
     private let multilinePlaceholderTop: CGFloat = 4
     private let multilinePlaceholderLeading: CGFloat = 4
     
-    private var outputHeight: CGFloat {
-        min(max(200, outputBaseHeight + outputDragTranslation), 720)
-    }
-
-    private var contentWidth: CGFloat {
-        min(max(420, contentBaseWidth + outputHorizontalDragTranslation), 980)
-    }
-
     private var processMaxHeight: CGFloat {
-        max(120, outputHeight - 120)
+        420
     }
 
     private var processHeight: CGFloat {
@@ -43,210 +31,20 @@ struct ContentView: View {
     private var runningTerminalSessions: [TerminalSessionItem] {
         appState.terminalSessions.filter { $0.isRunning }
     }
+
+    private var shouldShowOutputSection: Bool {
+        appState.showHistoryView || !runningTerminalSessions.isEmpty || !appState.resultText.isEmpty
+    }
     
     var body: some View {
         VStack(spacing: 0) {
-            // --- 1. 顶部输入区域 ---
-            HStack(alignment: multilineInput ? .top : .center, spacing: 10) {
-                Image(systemName: "terminal")
-                    .foregroundColor(.secondary)
-                
-                if multilineInput {
-                    ZStack(alignment: .topLeading) {
-                        if inputText.isEmpty {
-                            Text(singleLinePlaceholder)
-                                .foregroundStyle(.secondary)
-                                .padding(.top, multilinePlaceholderTop)
-                                .padding(.leading, multilinePlaceholderLeading)
-                        }
+            inputSection
 
-                        TextEditor(text: $inputText)
-                            .font(.body)
-                            .scrollContentBackground(.hidden)
-                            .focused($isInputFocused)
-                            .onExitCommand {
-                                handleExitCommand()
-                            }
-                    }
-                    .frame(minHeight: 58, maxHeight: 110)
-                } else {
-                    TextField(singleLinePlaceholder, text: $inputText)
-                        .textFieldStyle(.plain)
-                        .font(.body)
-                        .frame(height: 22)
-                        .focused($isInputFocused)
-                        .onKeyPress(.return, phases: [.down]) { keyPress in
-                            if keyPress.modifiers.contains(.shift) {
-                                enterMultilineModeWithNewline()
-                                return .handled
-                            }
-
-                            submitInput()
-                            return .handled
-                        }
-                        .onExitCommand {
-                            handleExitCommand()
-                        }
-                }
-
-                HStack(spacing: 8) {
-                    Button(action: {
-                        if multilineInput {
-                            multilineInput = false
-                            inputText = inputText
-                                .replacingOccurrences(of: "\r\n", with: " ")
-                                .replacingOccurrences(of: "\n", with: " ")
-                        } else {
-                            multilineInput = true
-                        }
-                        isInputFocused = true
-                    }) {
-                        Image(systemName: multilineInput ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(multilineInput ? "Switch to single-line input" : "Switch to multi-line input")
-
-                    Button(action: {
-                        submitInput()
-                    }) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title3)
-                    }
-                    .buttonStyle(.borderless)
-                    .help(multilineInput ? "Send (Cmd+Enter)" : "Send")
-                    .keyboardShortcut(.return, modifiers: [.command])
-                }
-                
-                if appState.isLoading {
-                    ProgressView().controlSize(.small)
-                }
-                
-                if appState.isLoading {
-                    Button(action: {
-                        appState.stopCurrentTask()
-                    }) {
-                        Image(systemName: "stop.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Stop current task")
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, multilineInput ? 10 : 6)
-            // 2. 修改背景色：使用 primary.opacity 让其在黑白模式下都能自动适配
-            // 浅色模式下是淡淡的灰，深色模式下是淡淡的白
-            .background(Color.primary.opacity(0.05))
-            
-            // --- 2. 内容展示区域 ---
-            if appState.showHistoryView || !runningTerminalSessions.isEmpty || !appState.resultText.isEmpty {
-                
-                Divider()
-                
-                VStack(alignment: .leading, spacing: 0) {
-                    if appState.showHistoryView {
-                        HistoryView(appState: appState)
-                    } else {
-                        VStack(spacing: 0) {
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 16) {
-                                    if !appState.resultText.isEmpty || (appState.isLoading && appState.resultText == "Thinking...") {
-                                        if appState.isLoading && appState.resultText == "Thinking..." {
-                                            Text(appState.resultText)
-                                                .font(.body)
-                                                .foregroundStyle(.secondary)
-                                                .padding(.top, 4)
-                                        } else if !appState.resultText.isEmpty {
-                                            MarkdownResultView(
-                                                resultText: appState.resultText,
-                                                colorScheme: colorScheme
-                                            )
-                                        }
-                                    }
-
-                                    if appState.isAIResponse && !appState.isLoading && !appState.resultText.isEmpty {
-                                        Divider()
-                                            .padding(.vertical, 8)
-
-                                        HStack(spacing: 12) {
-                                            Spacer()
-                                            Button(action: {
-                                                if let attributed = try? AttributedString(markdown: appState.resultText) {
-                                                    appState.copyToClipboard(String(attributed.characters))
-                                                } else {
-                                                    appState.copyToClipboard(appState.resultText)
-                                                }
-                                            }) {
-                                                Label("Copy Text", systemImage: "doc.on.doc")
-                                                    .font(.caption)
-                                            }
-                                            .buttonStyle(.bordered)
-                                            
-                                            Button(action: {
-                                                appState.copyToClipboard(appState.resultText)
-                                            }) {
-                                                Label("Copy Markdown", systemImage: "text.aligncenter")
-                                                    .font(.caption)
-                                            }
-                                            .buttonStyle(.bordered)
-                                        }
-                                    }
-                                }
-                                .padding()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            if !runningTerminalSessions.isEmpty {
-                                Divider()
-
-                                VStack(alignment: .leading, spacing: 10) {
-                                    HStack {
-                                        Spacer()
-                                        Capsule()
-                                            .fill(Color.secondary.opacity(0.35))
-                                            .frame(width: 42, height: 5)
-                                        Spacer()
-                                    }
-                                    .padding(.top, 8)
-                                    .contentShape(Rectangle())
-                                    .gesture(processResizeGesture())
-
-                                    Text("Processes")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 12)
-                                        .padding(.top, 2)
-
-                                    ScrollView {
-                                        LazyVStack(alignment: .leading, spacing: 10) {
-                                            ForEach(runningTerminalSessions) { session in
-                                                terminalSessionCard(session)
-                                            }
-                                        }
-                                        .padding(.horizontal, 12)
-                                        .padding(.bottom, 12)
-                                    }
-                                }
-                                .frame(height: processHeight)
-                                .background(Color.primary.opacity(0.03))
-                            }
-                        }
-                    }
-
-                    HStack(spacing: 0) {
-                        OutputCornerResizeHandle()
-                            .gesture(outputResizeGesture(horizontalDirection: -1))
-                        Spacer(minLength: 0)
-                        OutputCornerResizeHandle()
-                            .rotationEffect(.degrees(270))
-                            .gesture(outputResizeGesture(horizontalDirection: 1))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                }
-                .frame(height: outputHeight)
+            if shouldShowOutputSection {
+                outputSection
             }
         }
-        .frame(width: contentWidth)
+        .frame(minWidth: 500, maxWidth: .infinity, minHeight: 220, maxHeight: .infinity)
         .background(.ultraThinMaterial) // 保持毛玻璃效果
         .onAppear {
             inputText = appState.query
@@ -277,6 +75,194 @@ struct ContentView: View {
             }
         }
     }
+
+    private var inputSection: some View {
+        HStack(alignment: multilineInput ? .top : .center, spacing: 10) {
+            Image(systemName: "terminal")
+                .foregroundColor(.secondary)
+
+            if multilineInput {
+                ZStack(alignment: .topLeading) {
+                    if inputText.isEmpty {
+                        Text(singleLinePlaceholder)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, multilinePlaceholderTop)
+                            .padding(.leading, multilinePlaceholderLeading)
+                    }
+
+                    TextEditor(text: $inputText)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .focused($isInputFocused)
+                        .onExitCommand {
+                            handleExitCommand()
+                        }
+                }
+                .frame(minHeight: 58, maxHeight: 110)
+            } else {
+                TextField(singleLinePlaceholder, text: $inputText)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .frame(height: 22)
+                    .focused($isInputFocused)
+                    .onKeyPress(.return, phases: [.down]) { keyPress in
+                        if keyPress.modifiers.contains(.shift) {
+                            enterMultilineModeWithNewline()
+                            return .handled
+                        }
+
+                        submitInput()
+                        return .handled
+                    }
+                    .onExitCommand {
+                        handleExitCommand()
+                    }
+            }
+
+            HStack(spacing: 8) {
+                Button(action: {
+                    if multilineInput {
+                        multilineInput = false
+                        inputText = inputText
+                            .replacingOccurrences(of: "\r\n", with: " ")
+                            .replacingOccurrences(of: "\n", with: " ")
+                    } else {
+                        multilineInput = true
+                    }
+                    isInputFocused = true
+                }) {
+                    Image(systemName: multilineInput ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+                }
+                .buttonStyle(.borderless)
+                .help(multilineInput ? "Switch to single-line input" : "Switch to multi-line input")
+
+                Button(action: {
+                    submitInput()
+                }) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .help(multilineInput ? "Send (Cmd+Enter)" : "Send")
+                .keyboardShortcut(.return, modifiers: [.command])
+            }
+
+            if appState.isLoading {
+                ProgressView().controlSize(.small)
+            }
+
+            if appState.isLoading {
+                Button(action: {
+                    appState.stopCurrentTask()
+                }) {
+                    Image(systemName: "stop.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .help("Stop current task")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, multilineInput ? 10 : 6)
+        .background(Color.primary.opacity(0.05))
+    }
+
+    private var outputSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                if appState.showHistoryView {
+                    HistoryView(appState: appState)
+                } else {
+                    VStack(spacing: 0) {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 16) {
+                                if !appState.resultText.isEmpty || (appState.isLoading && appState.resultText == "Thinking...") {
+                                    if appState.isLoading && appState.resultText == "Thinking..." {
+                                        Text(appState.resultText)
+                                            .font(.body)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.top, 4)
+                                    } else if !appState.resultText.isEmpty {
+                                        MarkdownResultView(
+                                            resultText: appState.resultText,
+                                            colorScheme: colorScheme
+                                        )
+                                    }
+                                }
+
+                                if appState.isAIResponse && !appState.isLoading && !appState.resultText.isEmpty {
+                                    Divider()
+                                        .padding(.vertical, 8)
+
+                                    HStack(spacing: 12) {
+                                        Spacer()
+                                        Button(action: {
+                                            if let attributed = try? AttributedString(markdown: appState.resultText) {
+                                                appState.copyToClipboard(String(attributed.characters))
+                                            } else {
+                                                appState.copyToClipboard(appState.resultText)
+                                            }
+                                        }) {
+                                            Label("Copy Text", systemImage: "doc.on.doc")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.bordered)
+
+                                        Button(action: {
+                                            appState.copyToClipboard(appState.resultText)
+                                        }) {
+                                            Label("Copy Markdown", systemImage: "text.aligncenter")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                }
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if !runningTerminalSessions.isEmpty {
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Spacer()
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.35))
+                                        .frame(width: 42, height: 5)
+                                    Spacer()
+                                }
+                                .padding(.top, 8)
+                                .contentShape(Rectangle())
+                                .gesture(processResizeGesture())
+
+                                Text("Processes")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.top, 2)
+
+                                ScrollView {
+                                    LazyVStack(alignment: .leading, spacing: 10) {
+                                        ForEach(runningTerminalSessions) { session in
+                                            terminalSessionCard(session)
+                                        }
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.bottom, 12)
+                                }
+                            }
+                            .frame(height: processHeight)
+                            .background(Color.primary.opacity(0.03))
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
     
     private func submitInput() {
         let normalized = multilineInput
@@ -303,21 +289,6 @@ struct ContentView: View {
         }
         inputText += "\n"
         isInputFocused = true
-    }
-
-    private func outputResizeGesture(horizontalDirection: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 2)
-            .updating($outputDragTranslation) { value, state, _ in
-                state = value.translation.height
-            }
-            .updating($outputHorizontalDragTranslation) { value, state, _ in
-                state = value.translation.width * horizontalDirection
-            }
-            .onEnded { value in
-                outputBaseHeight = min(max(200, outputBaseHeight + value.translation.height), 720)
-                contentBaseWidth = min(max(420, contentBaseWidth + value.translation.width * horizontalDirection), 980)
-                processBaseHeight = min(processBaseHeight, processMaxHeight)
-            }
     }
 
     private func processResizeGesture() -> some Gesture {
@@ -391,28 +362,6 @@ struct ContentView: View {
         }
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-private struct OutputCornerResizeHandle: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 2)
-            .fill(Color.secondary.opacity(0.55))
-            .frame(width: 14, height: 14)
-            .overlay(alignment: .bottomTrailing) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.secondary.opacity(0.9))
-                    .frame(width: 10, height: 2)
-                    .offset(x: -1, y: -1)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.secondary.opacity(0.9))
-                    .frame(width: 2, height: 10)
-                    .offset(x: -1, y: -1)
-            }
-            .contentShape(Rectangle())
-            .help("Drag to resize output area (width and height)")
     }
 }
 

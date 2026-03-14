@@ -3,8 +3,7 @@ import AppKit
 final class StatusItemController: NSObject {
     private weak var appState: AppState?
     private weak var statusItem: NSStatusItem?
-    private weak var originalTarget: AnyObject?
-    private var originalAction: Selector?
+    private weak var windowController: CommanderWindowController?
     private var isShowingContextMenu = false
 
     private lazy var contextMenu: NSMenu = {
@@ -23,15 +22,12 @@ final class StatusItemController: NSObject {
         return menu
     }()
 
-    func configure(statusItem: NSStatusItem, appState: AppState) {
+    func configure(statusItem: NSStatusItem, appState: AppState, windowController: CommanderWindowController) {
         self.statusItem = statusItem
         self.appState = appState
+        self.windowController = windowController
 
         guard let button = statusItem.button else { return }
-        if originalAction == nil {
-            originalTarget = button.target as AnyObject?
-            originalAction = button.action
-        }
         button.target = self
         button.action = #selector(handleStatusItemClick(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -56,21 +52,15 @@ final class StatusItemController: NSObject {
         }
 
         guard !isShowingContextMenu else { return }
-
-        if let action = originalAction {
-            let target = originalTarget
-            _ = NSApp.sendAction(action, to: target, from: sender)
-        } else {
-            Task { @MainActor in
-                self.appState?.openWindowFromMenu()
-            }
+        Task { @MainActor in
+            self.windowController?.toggleWindow(anchorButton: sender)
         }
     }
 
     @objc
     private func openCommander() {
         Task { @MainActor in
-            self.appState?.openWindowFromMenu()
+            self.windowController?.showWindow(anchorButton: self.statusItem?.button)
         }
     }
 

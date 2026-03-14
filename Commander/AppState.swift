@@ -28,6 +28,9 @@ class AppState {
 
     var isAIResponse: Bool = false
     var shouldOpenSettings: Bool = false
+    var windowToggleHandler: (() -> Void)?
+    var windowShowHandler: (() -> Void)?
+    var windowHideHandler: (() -> Void)?
 
     var terminalSessions: [TerminalSessionItem] = []
 
@@ -51,6 +54,10 @@ class AppState {
     }
 
     func toggleWindow() {
+        if let windowToggleHandler {
+            windowToggleHandler()
+            return
+        }
         isWindowPresented.toggle()
         if isWindowPresented {
             NSApp.activate(ignoringOtherApps: true)
@@ -480,6 +487,7 @@ class AppState {
 
     @MainActor
     private func triggerOpenSettings() {
+        windowHideHandler?()
         isWindowPresented = false
         query = ""
         isLoading = false
@@ -511,6 +519,10 @@ class AppState {
 
     @MainActor
     func openWindowFromMenu() {
+        if let windowShowHandler {
+            windowShowHandler()
+            return
+        }
         isWindowPresented = true
         NSApp.activate(ignoringOtherApps: true)
         showHistoryView = false
@@ -518,6 +530,7 @@ class AppState {
 
     @MainActor
     func openSettingsFromMenu() {
+        windowHideHandler?()
         isWindowPresented = false
         query = ""
         isLoading = false
