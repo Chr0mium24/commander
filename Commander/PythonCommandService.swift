@@ -333,12 +333,17 @@ private enum PythonEngineRunner {
 
     nonisolated private static func runWithUV(scriptPath: String, payload: String) -> UVRunResult {
         var arguments = ["uv", "run"]
-        if let projectDir = resolveUVProjectDir(scriptPath: scriptPath) {
+        let projectDir = resolveUVProjectDir(scriptPath: scriptPath)
+        if let projectDir {
             arguments += ["--project", projectDir]
         }
         arguments += ["python", scriptPath, payload]
 
-        let outcome = runProcess(executable: envExecutable, arguments: arguments)
+        let outcome = runProcess(
+            executable: envExecutable,
+            arguments: arguments,
+            environment: uvEnvironment(projectDir: projectDir)
+        )
         switch outcome {
         case .launchFailed(let errorMessage):
             return .failure("Failed to run command engine via uv: \(errorMessage)")
@@ -455,14 +460,46 @@ private enum PythonEngineRunner {
             || lowered.contains("can't find")
     }
 
+    nonisolated private static func uvEnvironment(projectDir: String?) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+
+        let fileManager = FileManager.default
+        let envOverride = environment["COMMANDER_UV_ENV_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let envOverride, !envOverride.isEmpty {
+            environment["UV_PROJECT_ENVIRONMENT"] = envOverride
+        } else if let projectDir, !projectDir.isEmpty {
+            let folderName = URL(fileURLWithPath: projectDir).lastPathComponent
+            let cacheRoot = URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Library/Caches/Commander", isDirectory: true)
+            let envPath = cacheRoot
+                .appendingPathComponent("uv-env-\(folderName)", isDirectory: true)
+                .path
+            if !fileManager.fileExists(atPath: cacheRoot.path) {
+                try? fileManager.createDirectory(atPath: cacheRoot.path, withIntermediateDirectories: true)
+            }
+            environment["UV_PROJECT_ENVIRONMENT"] = envPath
+        }
+
+        if environment["UV_CACHE_DIR"]?.isEmpty != false {
+            let cachePath = URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Library/Caches/Commander/uv-cache", isDirectory: true)
+                .path
+            environment["UV_CACHE_DIR"] = cachePath
+        }
+
+        return environment
+    }
+
     nonisolated private static func runProcess(
         executable: String,
-        arguments: [String]
+        arguments: [String],
+        environment: [String: String]? = nil
     ) -> ProcessRunOutcome {
         let process = Process()
         let outputPipe = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        process.environment = environment
         process.standardOutput = outputPipe
         process.standardError = outputPipe
 
