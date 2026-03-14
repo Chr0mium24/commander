@@ -11,7 +11,7 @@ APP_PATH="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/Commander.app"
 
 DO_CLEAN=0
 DO_OPEN=1
-DO_KILL=0
+DO_KILL=1
 
 usage() {
   cat <<'EOF'
@@ -20,7 +20,8 @@ Usage: scripts/build_run.sh [options]
 Options:
   --clean      Clean before building
   --no-open    Build only, do not launch app
-  --kill       Kill existing Commander process before launch
+  --kill       Kill existing Commander process before launch (default on)
+  --no-kill    Do not kill existing Commander process before launch
   -h, --help   Show this help
 EOF
 }
@@ -37,6 +38,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --kill)
       DO_KILL=1
+      shift
+      ;;
+    --no-kill)
+      DO_KILL=0
       shift
       ;;
     -h|--help)
