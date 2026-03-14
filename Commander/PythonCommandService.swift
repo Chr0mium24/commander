@@ -8,10 +8,15 @@ struct CommandEngineSettings: Encodable {
 
     let pythonPath: String
     let scriptDirectory: String
+    let pluginDirectory: String
 
     let geminiApiKey: String
     let geminiModel: String
     let geminiProxy: String
+    let aiProvider: String
+    let aiBaseURL: String
+    let aiApiKey: String
+    let aiModel: String
 
     let historyLimit: Int
     let autoCopy: Bool
@@ -24,9 +29,14 @@ struct CommandEngineSettings: Encodable {
             aliasSer: UserDefaults.standard.string(forKey: AppStorageKey.aliasSer) ?? "ser",
             pythonPath: UserDefaults.standard.string(forKey: AppStorageKey.pythonPath) ?? "/usr/bin/python3",
             scriptDirectory: UserDefaults.standard.string(forKey: AppStorageKey.scriptDirectory) ?? "",
+            pluginDirectory: UserDefaults.standard.string(forKey: AppStorageKey.pluginDirectory) ?? "",
             geminiApiKey: UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? "",
             geminiModel: UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash",
             geminiProxy: UserDefaults.standard.string(forKey: AppStorageKey.geminiProxy) ?? "",
+            aiProvider: UserDefaults.standard.string(forKey: AppStorageKey.aiProvider) ?? "",
+            aiBaseURL: UserDefaults.standard.string(forKey: AppStorageKey.aiBaseURL) ?? "",
+            aiApiKey: UserDefaults.standard.string(forKey: AppStorageKey.aiApiKey) ?? "",
+            aiModel: UserDefaults.standard.string(forKey: AppStorageKey.aiModel) ?? "",
             historyLimit: UserDefaults.standard.integer(forKey: AppStorageKey.historyLimit),
             autoCopy: UserDefaults.standard.bool(forKey: AppStorageKey.autoCopy)
         )

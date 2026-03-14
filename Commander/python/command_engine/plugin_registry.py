@@ -161,6 +161,12 @@ class CommandRegistry:
             )
         return sorted(rows, key=lambda item: item.command)
 
+    def entries_by_plugin(self) -> dict[str, list[CommandHelpEntry]]:
+        grouped: dict[str, list[CommandHelpEntry]] = {}
+        for item in self.help_entries():
+            grouped.setdefault(item.plugin, []).append(item)
+        return grouped
+
 
 def load_builtin_plugins(registry: CommandRegistry, context: EngineContext) -> None:
     modules = (

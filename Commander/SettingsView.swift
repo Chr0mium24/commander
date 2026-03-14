@@ -1,6 +1,7 @@
 import SwiftUI
 import KeyboardShortcuts
 import ServiceManagement
+import AppKit
 internal import UniformTypeIdentifiers
 
 struct SettingsView: View {
@@ -12,6 +13,10 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.geminiKey) private var geminiKey = ""
     @AppStorage(AppStorageKey.geminiModel) private var geminiModel = "gemini-1.5-flash"
     @AppStorage(AppStorageKey.geminiProxy) private var geminiProxy = ""
+    @AppStorage(AppStorageKey.aiProvider) private var aiProvider = ""
+    @AppStorage(AppStorageKey.aiBaseURL) private var aiBaseURL = ""
+    @AppStorage(AppStorageKey.aiApiKey) private var aiApiKey = ""
+    @AppStorage(AppStorageKey.aiModel) private var aiModel = ""
 
     @AppStorage(AppStorageKey.aliasDef) private var aliasDef = "def"
     @AppStorage(AppStorageKey.aliasAsk) private var aliasAsk = "ask"
@@ -20,8 +25,10 @@ struct SettingsView: View {
 
     @AppStorage(AppStorageKey.pythonPath) private var pythonPath = "/usr/bin/python3"
     @AppStorage(AppStorageKey.scriptDirectory) private var scriptDirectory = ""
+    @AppStorage(AppStorageKey.pluginDirectory) private var pluginDirectory = ""
 
     @State private var showFolderImporter = false
+    @State private var showPluginFolderImporter = false
 
     var body: some View {
         TabView {
@@ -94,6 +101,34 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Plugin Directory")
+                    HStack {
+                        TextField("Path to commander plugins folder", text: $pluginDirectory)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+
+                        Button("Browse") {
+                            showPluginFolderImporter = true
+                        }
+                    }
+
+                    Text("Use `plugins` and `plugins inspect` to check load status.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Advanced Files") {
+                HStack(spacing: 10) {
+                    Button("Open User Config") {
+                        openUserConfigFile()
+                    }
+                    Button("Open Plugin Directory") {
+                        openPluginDirectory()
+                    }
+                }
             }
         }
         .formStyle(.grouped)
@@ -106,11 +141,20 @@ struct SettingsView: View {
             let _ = url.startAccessingSecurityScopedResource()
             scriptDirectory = url.path
         }
+        .fileImporter(
+            isPresented: $showPluginFolderImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let url = try? result.get().first else { return }
+            let _ = url.startAccessingSecurityScopedResource()
+            pluginDirectory = url.path
+        }
     }
 
     private var aiTab: some View {
         Form {
-            Section("Credentials") {
+            Section("Gemini Streaming (Built-in)") {
                 SecureField("API Key", text: $geminiKey)
                 TextField("Model Name", text: $geminiModel)
                 Text("Default: gemini-1.5-flash")
@@ -121,6 +165,16 @@ struct SettingsView: View {
             Section("Network") {
                 TextField("Proxy URL (Optional)", text: $geminiProxy, prompt: Text("https://your-proxy.com"))
                 Text("Leave empty to use the default Gemini API endpoint.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("OpenAI-Compatible Plugins") {
+                TextField("Provider Name (Optional)", text: $aiProvider, prompt: Text("edgefn / openai_compatible"))
+                TextField("Base URL", text: $aiBaseURL, prompt: Text("https://api.edgefn.net/v1/chat/completions"))
+                SecureField("API Key", text: $aiApiKey)
+                TextField("Model", text: $aiModel, prompt: Text("DeepSeek-V3.2"))
+                Text("These fields are consumed by Python plugins (for example `edge` command).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -161,7 +215,11 @@ struct SettingsView: View {
                 commandExample("set auto_copy true")
                 commandExample("set history_limit 50")
                 commandExample("set script_dir /Users/you/scripts")
+                commandExample("set plugin_dir ~/Library/Application\\ Support/Commander/plugins")
+                commandExample("set ai_base_url https://api.edgefn.net/v1/chat/completions")
+                commandExample("set ai_api_key sk-...")
                 commandExample("set")
+                commandExample("plugins inspect")
 
                 Text("`set` without arguments opens this settings window.")
                     .font(.caption)
@@ -204,5 +262,34 @@ struct SettingsView: View {
         } catch {
             print("Failed to update login item: \(error)")
         }
+    }
+
+    private func openUserConfigFile() {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Commander", isDirectory: true)
+        let configPath = appSupport.appendingPathComponent("config.json")
+
+        if !FileManager.default.fileExists(atPath: configPath.path) {
+            let template = """
+            {
+              "pluginDirectory": "",
+              "aiBaseURL": "",
+              "aiApiKey": "",
+              "aiModel": ""
+            }
+            """
+            try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+            try? template.write(to: configPath, atomically: true, encoding: .utf8)
+        }
+
+        NSWorkspace.shared.open(configPath)
+    }
+
+    private func openPluginDirectory() {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Commander", isDirectory: true)
+        let pluginPath = appSupport.appendingPathComponent("plugins", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pluginPath, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(pluginPath)
     }
 }

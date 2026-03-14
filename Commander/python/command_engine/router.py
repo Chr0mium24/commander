@@ -48,6 +48,7 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
 
     context.runtime_metadata["loaded_plugins"] = registry.loaded_plugins
     context.runtime_metadata["plugin_errors"] = registry.plugin_errors
+    context.runtime_metadata["plugin_directory"] = plugin_dir
 
     handled = registry.dispatch(context, trimmed)
     if not handled and not response["output"]:

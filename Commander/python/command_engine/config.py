@@ -56,12 +56,12 @@ def load_user_config() -> dict[str, Any]:
 
 
 def merged_settings(runtime_settings: dict[str, Any]) -> dict[str, Any]:
-    # Priority: defaults < runtime(request) < user config file.
-    # Keep user config highest so users can override app-provided settings by editing JSON.
+    # Priority: defaults < user config file < runtime(request).
+    # Runtime settings come from app state/UI and should reflect current user edits immediately.
     merged: dict[str, Any] = {}
     merged.update(load_defaults())
-    merged.update(runtime_settings or {})
     merged.update(load_user_config())
+    merged.update(runtime_settings or {})
     return merged
 
 
