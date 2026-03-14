@@ -40,12 +40,27 @@ struct ContentView: View {
         appState.terminalSessions.filter { $0.isRunning }
     }
 
+    private var sanitizedResultText: String {
+        let scalars = appState.resultText.unicodeScalars.filter { scalar in
+            if scalar == "\n" || scalar == "\r" || scalar == "\t" {
+                return true
+            }
+            let value = scalar.value
+            return !(value < 0x20 || value == 0x7F)
+        }
+        return String(String.UnicodeScalarView(scalars))
+    }
+
     private var hasVisibleResultText: Bool {
-        !appState.resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !sanitizedResultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasVisibleHistory: Bool {
+        appState.showHistoryView && !appState.history.isEmpty
     }
 
     private var shouldShowOutputSection: Bool {
-        appState.showHistoryView || !runningTerminalSessions.isEmpty || appState.isLoading || hasVisibleResultText
+        hasVisibleHistory || !runningTerminalSessions.isEmpty || appState.isLoading || hasVisibleResultText
     }
 
     private var glassBackground: some View {
@@ -285,7 +300,7 @@ struct ContentView: View {
                         if !runningTerminalSessions.isEmpty {
                             Divider()
 
-                            VStack(alignment: .leading, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Spacer()
                                     Capsule()
@@ -293,8 +308,8 @@ struct ContentView: View {
                                         .frame(width: 42, height: 5)
                                     Spacer()
                                 }
-                                .frame(height: 20)
-                                .padding(.top, 8)
+                                .frame(height: 12)
+                                .padding(.top, 2)
                                 .contentShape(Rectangle())
                                 .highPriorityGesture(processResizeGesture())
 
@@ -302,7 +317,7 @@ struct ContentView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 12)
-                                    .padding(.top, 2)
+                                    .padding(.top, 0)
 
                                 ScrollView {
                                     LazyVStack(alignment: .leading, spacing: 10) {

@@ -10,25 +10,25 @@ private final class CommanderWindow: NSWindow {
 final class CommanderWindowController: NSObject, NSWindowDelegate {
     private weak var appState: AppState?
     private var window: CommanderWindow?
-    private var resignObserver: NSObjectProtocol?
     private let compactHeight: CGFloat = 52
 
     init(appState: AppState) {
         self.appState = appState
         super.init()
-        resignObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification,
-            object: NSApp,
-            queue: .main
-        ) { [weak self] _ in
-            self?.hideWindow()
-        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidResignActive(_:)),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
     }
 
     deinit {
-        if let resignObserver {
-            NotificationCenter.default.removeObserver(resignObserver)
-        }
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
     }
 
     func toggleWindow(anchorButton: NSStatusBarButton? = nil) {
@@ -70,6 +70,11 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowDidResignMain(_ notification: Notification) {
+        hideWindow()
+    }
+
+    @objc
+    private func handleApplicationDidResignActive(_ notification: Notification) {
         hideWindow()
     }
 
