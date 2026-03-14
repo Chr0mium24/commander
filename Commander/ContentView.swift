@@ -5,7 +5,7 @@ import AppKit
 import SwiftTerm
 
 struct ContentView: View {
-    private let compactWindowHeight: CGFloat = 52
+    private let compactWindowHeight: CGFloat = 40
     private let expandedWindowMinimumHeight: CGFloat = 220
 
     private enum InputFocusField: Hashable {
@@ -91,20 +91,30 @@ struct ContentView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            inputSection
-
+        Group {
             if shouldShowOutputSection {
-                outputSection
+                VStack(spacing: 0) {
+                    inputSection
+                    outputSection
+                }
+                .frame(
+                    minWidth: 500,
+                    maxWidth: .infinity,
+                    minHeight: expandedWindowMinimumHeight,
+                    maxHeight: .infinity,
+                    alignment: .topLeading
+                )
+            } else {
+                inputSection
+                    .frame(
+                        minWidth: 500,
+                        maxWidth: .infinity,
+                        minHeight: compactWindowHeight,
+                        maxHeight: compactWindowHeight,
+                        alignment: .leading
+                    )
             }
         }
-        .frame(
-            minWidth: 500,
-            maxWidth: .infinity,
-            minHeight: shouldShowOutputSection ? expandedWindowMinimumHeight : compactWindowHeight,
-            maxHeight: .infinity,
-            alignment: .topLeading
-        )
         .background(glassBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onAppear {
@@ -236,8 +246,8 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, multilineInput ? 10 : 6)
-        .background(Color.primary.opacity(0.05))
+        .padding(.vertical, shouldShowOutputSection ? (multilineInput ? 10 : 6) : 3)
+        .background(shouldShowOutputSection ? Color.primary.opacity(0.05) : .clear)
     }
 
     private var outputSection: some View {
@@ -353,9 +363,14 @@ struct ContentView: View {
     }
     
     private func handleExitCommand() {
-        appState.query = inputText
-        appState.reset()
-        inputText = appState.query
+        if shouldShowOutputSection {
+            appState.collapseToInputOnly()
+            inputText = ""
+        } else {
+            appState.query = inputText
+            appState.reset()
+            inputText = appState.query
+        }
         multilineInput = false
         focusCurrentInput()
     }

@@ -78,6 +78,16 @@ class AppState {
         }
     }
 
+    func collapseToInputOnly() {
+        query = ""
+        resultText = ""
+        isAIResponse = false
+        showHistoryView = false
+        isLoading = false
+        terminateAllShellSessions()
+        terminalSessions = []
+    }
+
     func executeCommand() {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

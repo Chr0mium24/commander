@@ -30,12 +30,12 @@ def shell_env() -> dict[str, str]:
 
 def resolve_run_command(input_text: str, script_dir: str, python_path: str) -> tuple[str, bool]:
     trimmed = input_text.strip()
-    run_in_background = trimmed.endswith("&")
-    if run_in_background:
+    run_in_terminal = trimmed.endswith("&")
+    if run_in_terminal:
         trimmed = trimmed[:-1].strip()
 
     if not trimmed:
-        return "", run_in_background
+        return "", run_in_terminal
 
     command_name, _, arg_str = trimmed.partition(" ")
     final_command = trimmed
@@ -61,7 +61,7 @@ def resolve_run_command(input_text: str, script_dir: str, python_path: str) -> t
             if arg_str:
                 final_command += f" {arg_str}"
 
-    return final_command, run_in_background
+    return final_command, run_in_terminal
 
 
 def execute_shell(command: str, run_in_background: bool) -> str:

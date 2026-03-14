@@ -10,7 +10,7 @@ private final class CommanderWindow: NSWindow {
 final class CommanderWindowController: NSObject, NSWindowDelegate {
     private weak var appState: AppState?
     private var window: CommanderWindow?
-    private let compactHeight: CGFloat = 52
+    private let compactHeight: CGFloat = 40
 
     init(appState: AppState) {
         self.appState = appState
@@ -46,11 +46,15 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
     func showWindow(anchorButton: NSStatusBarButton? = nil) {
         guard let appState else { return }
         let window = ensureWindow(appState: appState)
-        if !shouldShowOutput(for: appState) {
+        let hasOutput = shouldShowOutput(for: appState)
+        if !hasOutput {
             applyCompactHeight(on: window, animated: false)
         }
         positionWindow(window, under: anchorButton)
         window.makeKeyAndOrderFront(nil)
+        if !hasOutput {
+            applyCompactHeight(on: window, animated: false)
+        }
         NSApp.activate(ignoringOtherApps: true)
         appState.isWindowPresented = true
         appState.showHistoryView = false
@@ -136,10 +140,24 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
     }
 
     private func shouldShowOutput(for appState: AppState) -> Bool {
-        appState.showHistoryView ||
-        appState.isLoading ||
-        appState.terminalSessions.contains(where: { $0.isRunning }) ||
-        !appState.resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasVisibleHistory = appState.showHistoryView && !appState.history.isEmpty
+        let hasRunningSession = appState.terminalSessions.contains(where: { $0.isRunning })
+        let hasVisibleResult = !sanitizedText(appState.resultText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+
+        return hasVisibleHistory || appState.isLoading || hasRunningSession || hasVisibleResult
+    }
+
+    private func sanitizedText(_ raw: String) -> String {
+        let scalars = raw.unicodeScalars.filter { scalar in
+            if scalar == "\n" || scalar == "\r" || scalar == "\t" {
+                return true
+            }
+            let value = scalar.value
+            return !(value < 0x20 || value == 0x7F)
+        }
+        return String(String.UnicodeScalarView(scalars))
     }
 
     private func applyCompactHeight(on window: NSWindow, animated: Bool) {

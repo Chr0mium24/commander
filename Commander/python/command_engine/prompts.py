@@ -38,7 +38,8 @@ Commands:
 - `set` open settings window
 - `set get <key>` read one setting
 - `set <key> <value>` update one setting
-- `run <command>` run shell command or script from script directory
+- `run <command>` run and capture output directly
+- `run <command> &` run inside process panel (interactive/stop-able)
 - `{aliases['py']} <code>` run python snippet
 - `{aliases['def']} <word>` force dictionary mode
 - `{aliases['ask']} <question>` force AI mode

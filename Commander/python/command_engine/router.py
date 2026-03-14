@@ -4,7 +4,7 @@ import urllib.parse
 from typing import Any
 
 from .constants import DEFAULT_PYTHON
-from .executors import execute_python_snippet, list_scripts, resolve_run_command
+from .executors import execute_python_snippet, execute_shell, list_scripts, resolve_run_command
 from .prompts import dictionary_prompt, help_text, is_single_word
 from .settings import handle_set_command
 from .utils import base_response, coalesce, fenced
@@ -82,17 +82,23 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
             response["output"] = "Usage: run <command or script_name>"
             return response
 
-        final_command, run_in_background = resolve_run_command(run_input, script_dir, python_path)
+        final_command, run_in_terminal = resolve_run_command(run_input, script_dir, python_path)
         if not final_command:
             response["output"] = "Usage: run <command or script_name>"
             return response
 
-        response["defer_shell"] = True
-        response["shell_command"] = final_command
-        response["shell_run_in_background"] = run_in_background
-        response["output"] = "Running..."
         response["history_type"] = "run"
-        response["should_save_history"] = False
+        if run_in_terminal:
+            response["defer_shell"] = True
+            response["shell_command"] = final_command
+            response["shell_run_in_background"] = False
+            response["output"] = "Running..."
+            response["should_save_history"] = False
+            return response
+
+        output = execute_shell(final_command, run_in_background=False)
+        response["output"] = output
+        response["should_save_history"] = True
         return response
 
     if command == ser_command:
