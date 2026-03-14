@@ -148,3 +148,23 @@ def execute_python_snippet(code: str, python_path: str) -> str:
                 os.remove(temp_file)
             except OSError:
                 pass
+
+
+def list_scripts(script_dir: str) -> list[str]:
+    if not script_dir or not os.path.isdir(script_dir):
+        return []
+
+    result: list[str] = []
+    try:
+        for name in os.listdir(script_dir):
+            if name.startswith("."):
+                continue
+            path = os.path.join(script_dir, name)
+            if not os.path.isfile(path):
+                continue
+            if name.endswith(".sh") or name.endswith(".py"):
+                result.append(name)
+    except OSError:
+        return []
+
+    return sorted(result, key=str.lower)

@@ -34,6 +34,7 @@ Default behavior:
 Commands:
 - `help` show this help
 - `hist` open history
+- `scripts` list scripts from script directory
 - `set` open settings window
 - `set get <key>` read one setting
 - `set <key> <value>` update one setting

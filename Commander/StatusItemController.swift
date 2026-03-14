@@ -5,6 +5,7 @@ final class StatusItemController: NSObject {
     private weak var statusItem: NSStatusItem?
     private weak var originalTarget: AnyObject?
     private var originalAction: Selector?
+    private var isShowingContextMenu = false
 
     private lazy var contextMenu: NSMenu = {
         let menu = NSMenu()
@@ -46,12 +47,15 @@ final class StatusItemController: NSObject {
         }
 
         if event.type == .rightMouseUp {
-            sender.menu = contextMenu
-            
-            sender.performClick(nil)
-            sender.menu = nil
+            guard !isShowingContextMenu else { return }
+            isShowingContextMenu = true
+            let menuOrigin = NSPoint(x: 0, y: sender.bounds.maxY + 4)
+            contextMenu.popUp(positioning: nil, at: menuOrigin, in: sender)
+            isShowingContextMenu = false
             return
         }
+
+        guard !isShowingContextMenu else { return }
 
         if let action = originalAction {
             let target = originalTarget

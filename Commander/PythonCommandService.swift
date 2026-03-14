@@ -62,6 +62,9 @@ struct CommandEngineResponse: Decodable {
     let isAIResponse: Bool
     let deferAI: Bool
     let aiPrompt: String
+    let deferShell: Bool
+    let shellCommand: String
+    let shellRunInBackground: Bool
     let showHistory: Bool
     let openSettings: Bool
     let shouldQuit: Bool
@@ -76,6 +79,9 @@ struct CommandEngineResponse: Decodable {
         case isAIResponse = "is_ai_response"
         case deferAI = "defer_ai"
         case aiPrompt = "ai_prompt"
+        case deferShell = "defer_shell"
+        case shellCommand = "shell_command"
+        case shellRunInBackground = "shell_run_in_background"
         case showHistory = "show_history"
         case openSettings = "open_settings"
         case shouldQuit = "should_quit"
@@ -92,6 +98,9 @@ struct CommandEngineResponse: Decodable {
         isAIResponse = try container.decodeIfPresent(Bool.self, forKey: .isAIResponse) ?? false
         deferAI = try container.decodeIfPresent(Bool.self, forKey: .deferAI) ?? false
         aiPrompt = try container.decodeIfPresent(String.self, forKey: .aiPrompt) ?? ""
+        deferShell = try container.decodeIfPresent(Bool.self, forKey: .deferShell) ?? false
+        shellCommand = try container.decodeIfPresent(String.self, forKey: .shellCommand) ?? ""
+        shellRunInBackground = try container.decodeIfPresent(Bool.self, forKey: .shellRunInBackground) ?? false
         showHistory = try container.decodeIfPresent(Bool.self, forKey: .showHistory) ?? false
         openSettings = try container.decodeIfPresent(Bool.self, forKey: .openSettings) ?? false
         shouldQuit = try container.decodeIfPresent(Bool.self, forKey: .shouldQuit) ?? false
@@ -108,6 +117,9 @@ struct CommandEngineResponse: Decodable {
             isAIResponse: false,
             deferAI: false,
             aiPrompt: "",
+            deferShell: false,
+            shellCommand: "",
+            shellRunInBackground: false,
             showHistory: false,
             openSettings: false,
             shouldQuit: false,
@@ -124,6 +136,9 @@ struct CommandEngineResponse: Decodable {
         isAIResponse: Bool,
         deferAI: Bool,
         aiPrompt: String,
+        deferShell: Bool,
+        shellCommand: String,
+        shellRunInBackground: Bool,
         showHistory: Bool,
         openSettings: Bool,
         shouldQuit: Bool,
@@ -137,6 +152,9 @@ struct CommandEngineResponse: Decodable {
         self.isAIResponse = isAIResponse
         self.deferAI = deferAI
         self.aiPrompt = aiPrompt
+        self.deferShell = deferShell
+        self.shellCommand = shellCommand
+        self.shellRunInBackground = shellRunInBackground
         self.showHistory = showHistory
         self.openSettings = openSettings
         self.shouldQuit = shouldQuit

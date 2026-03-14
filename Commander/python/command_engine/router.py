@@ -4,7 +4,7 @@ import urllib.parse
 from typing import Any
 
 from .constants import DEFAULT_PYTHON
-from .executors import execute_python_snippet, execute_shell, resolve_run_command
+from .executors import execute_python_snippet, list_scripts, resolve_run_command
 from .prompts import dictionary_prompt, help_text, is_single_word
 from .settings import handle_set_command
 from .utils import base_response, coalesce, fenced
@@ -48,6 +48,20 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
         response["output"] = help_text(aliases)
         return response
 
+    if command == "scripts":
+        if not script_dir:
+            response["output"] = "Script directory is not configured. Set it in Settings."
+            return response
+
+        names = list_scripts(script_dir)
+        if not names:
+            response["output"] = f"No .sh/.py scripts found in: {script_dir}"
+            return response
+
+        lines = "\n".join(f"- `{name}`" for name in names)
+        response["output"] = f"### Scripts in `{script_dir}`\n\n{lines}"
+        return response
+
     if command == "set":
         return handle_set_command(content, settings, response)
 
@@ -69,13 +83,16 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
             return response
 
         final_command, run_in_background = resolve_run_command(run_input, script_dir, python_path)
-        shell_output = execute_shell(final_command, run_in_background)
-        response["output"] = "\\n".join([
-            "### Shell Output",
-            fenced("bash", shell_output),
-        ])
+        if not final_command:
+            response["output"] = "Usage: run <command or script_name>"
+            return response
+
+        response["defer_shell"] = True
+        response["shell_command"] = final_command
+        response["shell_run_in_background"] = run_in_background
+        response["output"] = "Running..."
         response["history_type"] = "run"
-        response["should_save_history"] = True
+        response["should_save_history"] = False
         return response
 
     if command == ser_command:

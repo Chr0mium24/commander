@@ -7,6 +7,15 @@ extension KeyboardShortcuts.Name {
     static let toggleWindow = Self("toggleWindow", default: .init(.space, modifiers: [.option]))
 }
 
+struct TerminalSessionItem: Identifiable, Equatable {
+    let id: UUID
+    let command: String
+    var outputData: Data
+    var isRunning: Bool
+    var runInBackground: Bool
+    var isCollapsed: Bool
+}
+
 @Observable
 class AppState {
     var isWindowPresented: Bool = false
@@ -18,7 +27,17 @@ class AppState {
     var isAIResponse: Bool = false
     var shouldOpenSettings: Bool = false
 
+    var terminalSessions: [TerminalSessionItem] = []
+
     var history: [HistoryItem] = []
+
+    private var activeExecutionID: UUID = UUID()
+    private var activeCommandTask: Task<Void, Never>?
+    private var shellSessions: [UUID: ShellSession] = [:]
+    private var lastSubmitAt: Date = .distantPast
+
+    private let minSubmitInterval: TimeInterval = 0.20
+    private let routeTimeoutNanoseconds: UInt64 = 8_000_000_000
 
     init() {
         KeyboardShortcuts.onKeyUp(for: .toggleWindow) { [weak self] in
@@ -42,33 +61,132 @@ class AppState {
             resultText = ""
             isAIResponse = false
             showHistoryView = false
+            terminateAllShellSessions()
+            terminalSessions = []
         }
     }
 
     func executeCommand() {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        
+        let now = Date()
+        guard now.timeIntervalSince(lastSubmitAt) >= minSubmitInterval else { return }
+        lastSubmitAt = now
+
+        cancelActiveExecution(showInterruptedNote: false)
+        let executionID = beginExecution()
 
         isAIResponse = false
         showHistoryView = false
         isLoading = true
         resultText = ""
 
-        Task {
-            let response = await PythonCommandService.execute(
+        activeCommandTask = Task {
+            let response = await runRoutingWithTimeout(
                 query: trimmed,
-                settings: CommandEngineSettings.current()
+                settings: CommandEngineSettings.current(),
+                timeoutNanoseconds: routeTimeoutNanoseconds
             )
 
             await MainActor.run {
-                self.applyCommandResponse(response, originalQuery: trimmed)
+                self.applyCommandResponse(response, originalQuery: trimmed, executionID: executionID)
             }
         }
     }
 
+    private func runRoutingWithTimeout(
+        query: String,
+        settings: CommandEngineSettings,
+        timeoutNanoseconds: UInt64
+    ) async -> CommandEngineResponse {
+        await withTaskGroup(of: CommandEngineResponse.self) { group in
+            group.addTask {
+                await PythonCommandService.execute(query: query, settings: settings)
+            }
+
+            group.addTask {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                return await MainActor.run {
+                    CommandEngineResponse.failure("Command routing timed out. Please try again.")
+                }
+            }
+
+            let first = if let first = await group.next() {
+                first
+            } else {
+                await MainActor.run {
+                    CommandEngineResponse.failure("Command routing failed.")
+                }
+            }
+            group.cancelAll()
+            return first
+        }
+    }
+
+    func stopCurrentTask() {
+        if isLoading {
+            cancelActiveExecution(showInterruptedNote: true)
+            return
+        }
+
+        guard let sessionID = terminalSessions.last(where: { $0.isRunning })?.id else { return }
+        stopTerminalSession(sessionID)
+    }
+
+    func sendTerminalData(sessionID: UUID, data: Data) {
+        guard shellSessions[sessionID] != nil else { return }
+        shellSessions[sessionID]?.sendData(data)
+    }
+
+    func toggleTerminalSessionCollapsed(_ sessionID: UUID) {
+        updateSession(sessionID) { session in
+            session.isCollapsed.toggle()
+        }
+    }
+
+    func stopTerminalSession(_ sessionID: UUID) {
+        guard let shell = shellSessions[sessionID] else { return }
+        shell.terminate()
+        shellSessions[sessionID] = nil
+
+        updateSession(sessionID) { session in
+            session.isRunning = false
+            session.outputData.append(contentsOf: "\n[Interrupted]\n".utf8)
+        }
+    }
+
+    private func beginExecution() -> UUID {
+        let executionID = UUID()
+        activeExecutionID = executionID
+        return executionID
+    }
+
+    private func isCurrentExecution(_ executionID: UUID) -> Bool {
+        activeExecutionID == executionID
+    }
+
+    private func cancelActiveExecution(showInterruptedNote: Bool) {
+        activeExecutionID = UUID()
+
+        activeCommandTask?.cancel()
+        activeCommandTask = nil
+
+        if showInterruptedNote {
+            if isLoading {
+                resultText = "Interrupted."
+            }
+        }
+
+        isLoading = false
+    }
+
     @MainActor
-    private func applyCommandResponse(_ response: CommandEngineResponse, originalQuery: String) {
+    private func applyCommandResponse(_ response: CommandEngineResponse, originalQuery: String, executionID: UUID) {
+        guard isCurrentExecution(executionID) else { return }
+
         applySettingUpdates(response.settingUpdates)
+        activeCommandTask = nil
 
         if let openURL = response.openURL, let url = URL(string: openURL) {
             NSWorkspace.shared.open(url)
@@ -91,10 +209,22 @@ class AppState {
             return
         }
 
+        if response.deferShell {
+            let type = response.historyType.isEmpty ? "run" : response.historyType
+            let input = response.historyInput.isEmpty ? originalQuery : response.historyInput
+            startShellSession(
+                command: response.shellCommand,
+                runInBackground: response.shellRunInBackground,
+                historyType: type,
+                historyInput: input
+            )
+            return
+        }
+
         if response.deferAI {
             let type = response.historyType.isEmpty ? "ai" : response.historyType
             let input = response.historyInput.isEmpty ? originalQuery : response.historyInput
-            streamAIResponse(prompt: response.aiPrompt, historyType: type, historyInput: input)
+            streamAIResponse(prompt: response.aiPrompt, historyType: type, historyInput: input, executionID: executionID)
             return
         }
 
@@ -115,7 +245,7 @@ class AppState {
         isLoading = false
     }
 
-    private func streamAIResponse(prompt: String, historyType: String, historyInput: String) {
+    private func streamAIResponse(prompt: String, historyType: String, historyInput: String, executionID: UUID) {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             resultText = "Error: Missing AI prompt."
             isLoading = false
@@ -128,7 +258,7 @@ class AppState {
 
         resultText = "Thinking..."
 
-        Task {
+        activeCommandTask = Task {
             var fullResponse = ""
 
             do {
@@ -138,9 +268,11 @@ class AppState {
                     model: model,
                     proxyURL: proxy
                 ) {
+                    if Task.isCancelled { return }
                     fullResponse += chunk
 
                     await MainActor.run {
+                        guard self.isCurrentExecution(executionID) else { return }
                         if self.resultText == "Thinking..." {
                             self.resultText = chunk
                         } else {
@@ -150,12 +282,23 @@ class AppState {
                 }
 
                 await MainActor.run {
+                    guard self.isCurrentExecution(executionID) else { return }
+                    self.activeCommandTask = nil
                     self.isAIResponse = true
                     let output = fullResponse.isEmpty ? "Done (No Output)" : fullResponse
                     self.finalizeCommand(type: historyType, input: historyInput, output: output)
                 }
+            } catch is CancellationError {
+                await MainActor.run {
+                    guard self.isCurrentExecution(executionID) else { return }
+                    self.activeCommandTask = nil
+                    self.isLoading = false
+                }
             } catch {
                 await MainActor.run {
+                    guard self.isCurrentExecution(executionID) else { return }
+                    self.activeCommandTask = nil
+
                     if historyType == "def",
                        let word = self.extractDictionaryWord(from: historyInput),
                        let local = self.localDictionaryMarkdown(word: word) {
@@ -170,6 +313,103 @@ class AppState {
                 }
             }
         }
+    }
+
+    private func startShellSession(
+        command: String,
+        runInBackground: Bool,
+        historyType: String,
+        historyInput: String
+    ) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            resultText = "Error: Empty shell command"
+            isLoading = false
+            return
+        }
+
+        let sessionID = UUID()
+        let initialOutput = Data("$ \(trimmed)\n".utf8)
+        terminalSessions.append(
+            TerminalSessionItem(
+                id: sessionID,
+                command: trimmed,
+                outputData: initialOutput,
+                isRunning: true,
+                runInBackground: runInBackground,
+                isCollapsed: false
+            )
+        )
+        showHistoryView = false
+        isLoading = false
+
+        do {
+            let shell = try ShellSession.start(
+                command: trimmed,
+                runInBackground: runInBackground,
+                onOutput: { [weak self] chunk in
+                    guard let self else { return }
+                    self.updateSession(sessionID) { session in
+                        session.outputData.append(chunk)
+                    }
+                },
+                onExit: { [weak self] status in
+                    guard let self else { return }
+                    self.shellSessions[sessionID] = nil
+                    self.updateSession(sessionID) { session in
+                        session.isRunning = false
+                        if status != 0 {
+                            session.outputData.append(contentsOf: "\n[Process exited with code \(status)]\n".utf8)
+                        }
+                    }
+
+                    let output = self.sessionByID(sessionID).map {
+                        String(decoding: $0.outputData, as: UTF8.self)
+                    }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    self.finalizeCommand(
+                        type: historyType,
+                        input: historyInput,
+                        output: output.isEmpty ? "Done (No Output)" : output
+                    )
+                    self.terminalSessions.removeAll { $0.id == sessionID }
+                }
+            )
+            shellSessions[sessionID] = shell
+        } catch {
+            updateSession(sessionID) { session in
+                session.isRunning = false
+                session.outputData.append(contentsOf: "\nFailed to start process: \(error.localizedDescription)\n".utf8)
+            }
+            isLoading = false
+            let fallbackOutput = sessionByID(sessionID).map {
+                String(decoding: $0.outputData, as: UTF8.self)
+            } ?? "Failed to start process."
+            finalizeCommand(type: "run", input: historyInput, output: fallbackOutput)
+            terminalSessions.removeAll { $0.id == sessionID }
+        }
+    }
+
+    private func indexOfSession(id: UUID) -> Int? {
+        terminalSessions.firstIndex(where: { $0.id == id })
+    }
+
+    private func sessionByID(_ sessionID: UUID) -> TerminalSessionItem? {
+        guard let index = indexOfSession(id: sessionID) else { return nil }
+        return terminalSessions[index]
+    }
+
+    private func updateSession(_ sessionID: UUID, mutate: (inout TerminalSessionItem) -> Void) {
+        guard let index = indexOfSession(id: sessionID) else { return }
+        var session = terminalSessions[index]
+        mutate(&session)
+        terminalSessions[index] = session
+    }
+
+    private func terminateAllShellSessions() {
+        for shell in shellSessions.values {
+            shell.terminate()
+        }
+        shellSessions.removeAll()
     }
 
     private func extractDictionaryWord(from historyInput: String) -> String? {

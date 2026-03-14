@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		203A5E5B2F65B2810023AF3D /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 203A5E5A2F65B2810023AF3D /* SwiftTerm */; };
 		208FDCC42ED09ABE004B8430 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 208FDCC32ED09ABE004B8430 /* KeyboardShortcuts */; };
 		208FDCC72ED09B07004B8430 /* MenuBarExtraAccess in Frameworks */ = {isa = PBXBuildFile; productRef = 208FDCC62ED09B07004B8430 /* MenuBarExtraAccess */; };
 		208FDCD62ED0A634004B8430 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 208FDCD52ED0A634004B8430 /* MarkdownUI */; };
@@ -31,6 +32,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				208FDCD62ED0A634004B8430 /* MarkdownUI in Frameworks */,
+				203A5E5B2F65B2810023AF3D /* SwiftTerm in Frameworks */,
 				208FDCD92ED0A676004B8430 /* Splash in Frameworks */,
 				208FDCC72ED09B07004B8430 /* MenuBarExtraAccess in Frameworks */,
 				208FDCC42ED09ABE004B8430 /* KeyboardShortcuts in Frameworks */,
@@ -80,6 +82,7 @@
 				208FDCC62ED09B07004B8430 /* MenuBarExtraAccess */,
 				208FDCD52ED0A634004B8430 /* MarkdownUI */,
 				208FDCD82ED0A676004B8430 /* Splash */,
+				203A5E5A2F65B2810023AF3D /* SwiftTerm */,
 			);
 			productName = commander;
 			productReference = 208FDCA32ED094D0004B8430 /* Commander.app */;
@@ -114,6 +117,7 @@
 				208FDCC52ED09B07004B8430 /* XCRemoteSwiftPackageReference "MenuBarExtraAccess" */,
 				208FDCD42ED0A634004B8430 /* XCRemoteSwiftPackageReference "MarkdownUI" */,
 				208FDCD72ED0A676004B8430 /* XCRemoteSwiftPackageReference "Splash" */,
+				203A5E592F65B2810023AF3D /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 208FDCA42ED094D0004B8430 /* Products */;
@@ -380,6 +384,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		203A5E592F65B2810023AF3D /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.0;
+			};
+		};
 		208FDCC22ED09ABE004B8430 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
@@ -415,6 +427,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		203A5E5A2F65B2810023AF3D /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 203A5E592F65B2810023AF3D /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
 		208FDCC32ED09ABE004B8430 /* KeyboardShortcuts */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 208FDCC22ED09ABE004B8430 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
