@@ -47,6 +47,33 @@ struct ContentView: View {
     private var shouldShowOutputSection: Bool {
         appState.showHistoryView || !runningTerminalSessions.isEmpty || appState.isLoading || hasVisibleResultText
     }
+
+    private var glassBackground: some View {
+        ZStack {
+            Rectangle()
+                .fill(.thickMaterial)
+
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.28),
+                    Color.black.opacity(0.16),
+                    Color.black.opacity(0.24)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.10),
+                    Color.clear
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .blendMode(.screen)
+        }
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -63,7 +90,7 @@ struct ContentView: View {
             maxHeight: .infinity,
             alignment: .topLeading
         )
-        .background(.ultraThinMaterial) // 保持毛玻璃效果
+        .background(glassBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onAppear {
             if !shouldShowOutputSection {
