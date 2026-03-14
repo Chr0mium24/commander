@@ -5,9 +5,17 @@ import AppKit
 import SwiftTerm
 
 struct ContentView: View {
+    private let compactWindowHeight: CGFloat = 52
+    private let expandedWindowMinimumHeight: CGFloat = 220
+
+    private enum InputFocusField: Hashable {
+        case singleLine
+        case multiLine
+    }
+
     @Bindable var appState: AppState
-    @FocusState private var isInputFocused: Bool
-    @AppStorage(AppStorageKey.multilineInput) private var multilineInput = false
+    @FocusState private var focusedInput: InputFocusField?
+    @State private var multilineInput = false
     @State private var inputText: String = ""
     @State private var processBaseHeight: CGFloat = 190
     @GestureState private var processDragTranslation: CGFloat = 0
@@ -32,8 +40,12 @@ struct ContentView: View {
         appState.terminalSessions.filter { $0.isRunning }
     }
 
+    private var hasVisibleResultText: Bool {
+        !appState.resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var shouldShowOutputSection: Bool {
-        appState.showHistoryView || !runningTerminalSessions.isEmpty || !appState.resultText.isEmpty
+        appState.showHistoryView || !runningTerminalSessions.isEmpty || appState.isLoading || hasVisibleResultText
     }
     
     var body: some View {
@@ -44,17 +56,28 @@ struct ContentView: View {
                 outputSection
             }
         }
-        .frame(minWidth: 500, maxWidth: .infinity, minHeight: 220, maxHeight: .infinity, alignment: .topLeading)
+        .frame(
+            minWidth: 500,
+            maxWidth: .infinity,
+            minHeight: shouldShowOutputSection ? expandedWindowMinimumHeight : compactWindowHeight,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
         .background(.ultraThinMaterial) // 保持毛玻璃效果
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onAppear {
+            if !shouldShowOutputSection {
+                multilineInput = false
+            }
             inputText = appState.query
-            isInputFocused = true
+            focusCurrentInput()
+            syncWindowHeightWithState(animated: false)
         }
         .onChange(of: inputText) { _, newValue in
             guard !multilineInput else { return }
             if newValue.contains("\n") || newValue.contains("\r") {
                 multilineInput = true
+                focusCurrentInput()
             }
         }
         .onChange(of: appState.query) { _, newValue in
@@ -65,9 +88,16 @@ struct ContentView: View {
         .onChange(of: appState.isWindowPresented) { _, newValue in
             if newValue {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    isInputFocused = true
+                    focusCurrentInput()
                 }
             }
+        }
+        .onChange(of: shouldShowOutputSection) { _, newValue in
+            if !newValue {
+                multilineInput = false
+                focusCurrentInput()
+            }
+            syncWindowHeightWithState(animated: true)
         }
         .onChange(of: appState.shouldOpenSettings) { _, newValue in
             if newValue {
@@ -94,9 +124,9 @@ struct ContentView: View {
                     TextEditor(text: $inputText)
                         .font(.body)
                         .scrollContentBackground(.hidden)
-                        .focused($isInputFocused)
+                        .focused($focusedInput, equals: .multiLine)
                         .onExitCommand {
-                            handleExitCommand()
+                            handleMultilineExitCommand()
                         }
                 }
                 .frame(minHeight: 58, maxHeight: 110)
@@ -105,15 +135,16 @@ struct ContentView: View {
                     .textFieldStyle(.plain)
                     .font(.body)
                     .frame(height: 22)
-                    .focused($isInputFocused)
+                    .focused($focusedInput, equals: .singleLine)
                     .onKeyPress(.return, phases: [.down]) { keyPress in
                         if keyPress.modifiers.contains(.shift) {
                             enterMultilineModeWithNewline()
                             return .handled
                         }
-
+                        return .ignored
+                    }
+                    .onSubmit {
                         submitInput()
-                        return .handled
                     }
                     .onExitCommand {
                         handleExitCommand()
@@ -130,7 +161,7 @@ struct ContentView: View {
                     } else {
                         multilineInput = true
                     }
-                    isInputFocused = true
+                    focusCurrentInput()
                 }) {
                     Image(systemName: multilineInput ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
                 }
@@ -283,6 +314,16 @@ struct ContentView: View {
         appState.query = inputText
         appState.reset()
         inputText = appState.query
+        multilineInput = false
+        focusCurrentInput()
+    }
+
+    private func handleMultilineExitCommand() {
+        if shouldCollapseToSingleLine() {
+            collapseToSingleLine()
+            return
+        }
+        handleExitCommand()
     }
 
     private func enterMultilineModeWithNewline() {
@@ -290,7 +331,50 @@ struct ContentView: View {
             multilineInput = true
         }
         inputText += "\n"
-        isInputFocused = true
+        focusCurrentInput()
+    }
+
+    private func shouldCollapseToSingleLine() -> Bool {
+        let normalized = inputText
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let lastLine = lines.last else { return true }
+        return lastLine.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func collapseToSingleLine() {
+        multilineInput = false
+        inputText = inputText
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        focusCurrentInput()
+    }
+
+    private func focusCurrentInput() {
+        DispatchQueue.main.async {
+            focusedInput = multilineInput ? .multiLine : .singleLine
+        }
+    }
+
+    private func syncWindowHeightWithState(animated: Bool) {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+
+        var frame = window.frame
+
+        if !shouldShowOutputSection {
+            guard abs(frame.height - compactWindowHeight) > 1 else { return }
+            frame.origin.y += frame.height - compactWindowHeight
+            frame.size.height = compactWindowHeight
+            window.setFrame(frame, display: true, animate: animated)
+            return
+        }
+
+        guard frame.height < expandedWindowMinimumHeight else { return }
+        frame.origin.y += frame.height - expandedWindowMinimumHeight
+        frame.size.height = expandedWindowMinimumHeight
+        window.setFrame(frame, display: true, animate: animated)
     }
 
     private func processResizeGesture() -> some Gesture {

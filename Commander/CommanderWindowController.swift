@@ -11,6 +11,7 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
     private weak var appState: AppState?
     private var window: CommanderWindow?
     private var resignObserver: NSObjectProtocol?
+    private let compactHeight: CGFloat = 52
 
     init(appState: AppState) {
         self.appState = appState
@@ -45,6 +46,9 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
     func showWindow(anchorButton: NSStatusBarButton? = nil) {
         guard let appState else { return }
         let window = ensureWindow(appState: appState)
+        if !shouldShowOutput(for: appState) {
+            applyCompactHeight(on: window, animated: false)
+        }
         positionWindow(window, under: anchorButton)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -91,7 +95,7 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
         window.hasShadow = true
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 460, height: 300)
+        window.minSize = NSSize(width: 460, height: compactHeight)
         window.delegate = self
         window.setFrameAutosaveName("CommanderMainWindow")
         hostingView.wantsLayer = true
@@ -124,5 +128,21 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
         frame.origin.y = max(visible.minY, desiredTop - frame.height)
 
         window.setFrame(frame, display: false)
+    }
+
+    private func shouldShowOutput(for appState: AppState) -> Bool {
+        appState.showHistoryView ||
+        appState.isLoading ||
+        appState.terminalSessions.contains(where: { $0.isRunning }) ||
+        !appState.resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func applyCompactHeight(on window: NSWindow, animated: Bool) {
+        guard abs(window.frame.height - compactHeight) > 1 else { return }
+
+        var frame = window.frame
+        frame.origin.y += frame.height - compactHeight
+        frame.size.height = compactHeight
+        window.setFrame(frame, display: false, animate: animated)
     }
 }
