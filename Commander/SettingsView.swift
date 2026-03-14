@@ -2,6 +2,7 @@ import SwiftUI
 import KeyboardShortcuts
 import ServiceManagement
 import AppKit
+import Foundation
 internal import UniformTypeIdentifiers
 
 struct SettingsView: View {
@@ -37,6 +38,8 @@ struct SettingsView: View {
     @State private var didLoadDynamicSchema = false
     @State private var dynamicSearchText = ""
     @State private var dynamicCollapsedGroups: Set<String> = []
+    @State private var dynamicBaseValues: [String: String] = [:]
+    @State private var showDynamicJSONImporter = false
 
     var body: some View {
         TabView {
@@ -257,6 +260,19 @@ struct SettingsView: View {
                     .buttonStyle(.bordered)
                     .disabled(filteredDynamicSchema.isEmpty)
 
+                    Button("Import JSON") {
+                        showDynamicJSONImporter = true
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Apply Changed") {
+                        Task {
+                            await applyAllChangedDynamicSettings()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(changedDynamicSettingCount == 0 || isDynamicLoading)
+
                     Button("Reload Schema") {
                         Task {
                             await loadDynamicSchema(force: true)
@@ -283,6 +299,10 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Text("Changed: \(changedDynamicSettingCount)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
                 if let configPath = dynamicConfigPaths["user_config"], !configPath.isEmpty {
                     HStack(spacing: 8) {
@@ -342,6 +362,13 @@ struct SettingsView: View {
         }
         .task {
             await loadDynamicSchema(force: false)
+        }
+        .fileImporter(
+            isPresented: $showDynamicJSONImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            handleDynamicJSONImport(result)
         }
     }
 
@@ -558,15 +585,11 @@ struct SettingsView: View {
 
         let commandKey = item.commandKey.isEmpty ? item.key : item.commandKey
         let setValue = normalizedDynamicType(item.type) == "bool" ? (boolFromString(rawValue) ? "true" : "false") : rawValue
-        let query = "set \(commandKey) \(quoteSetValue(setValue))"
-
         Task {
-            let response = await PythonCommandService.execute(
-                query: query,
-                settings: CommandEngineSettings.current()
-            )
+            let response = await applyDynamicSettingValue(commandKey: commandKey, value: setValue)
             await MainActor.run {
                 dynamicStatusMessage = response.output
+                dynamicBaseValues[item.key] = setValue
             }
         }
     }
@@ -630,12 +653,16 @@ struct SettingsView: View {
         dynamicSchema = response.settingSchema.filter { !$0.key.isEmpty }
         dynamicConfigPaths = response.configPaths
         var mergedValues = dynamicValues
+        var newBaseValues: [String: String] = [:]
         for item in dynamicSchema {
+            let baseValue = normalizedStoredValue(for: item, value: initialValue(for: item))
+            newBaseValues[item.key] = baseValue
             if force || mergedValues[item.key] == nil {
-                mergedValues[item.key] = initialValue(for: item)
+                mergedValues[item.key] = baseValue
             }
         }
         dynamicValues = mergedValues
+        dynamicBaseValues = newBaseValues
         dynamicStatusMessage = response.output
         didLoadDynamicSchema = true
     }
@@ -660,5 +687,131 @@ struct SettingsView: View {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         dynamicStatusMessage = "Copied visible dynamic settings as JSON."
+    }
+
+    private var changedDynamicSettingCount: Int {
+        dynamicSchema.reduce(into: 0) { partial, item in
+            let current = normalizedStoredValue(for: item, value: dynamicValues[item.key] ?? initialValue(for: item))
+            let base = dynamicBaseValues[item.key] ?? normalizedStoredValue(for: item, value: initialValue(for: item))
+            if current != base {
+                partial += 1
+            }
+        }
+    }
+
+    private func normalizedStoredValue(for item: CommandEngineSettingSchemaItem, value: String) -> String {
+        if normalizedDynamicType(item.type) == "bool" {
+            return boolFromString(value) ? "true" : "false"
+        }
+        return value
+    }
+
+    @MainActor
+    private func applyAllChangedDynamicSettings() async {
+        if isDynamicLoading {
+            return
+        }
+        isDynamicLoading = true
+        defer { isDynamicLoading = false }
+
+        var changedItems: [(item: CommandEngineSettingSchemaItem, value: String)] = []
+        for item in dynamicSchema {
+            let current = normalizedStoredValue(for: item, value: dynamicValues[item.key] ?? initialValue(for: item))
+            let base = dynamicBaseValues[item.key] ?? normalizedStoredValue(for: item, value: initialValue(for: item))
+            if current != base {
+                changedItems.append((item: item, value: current))
+            }
+        }
+
+        guard !changedItems.isEmpty else {
+            dynamicStatusMessage = "No changed settings to apply."
+            return
+        }
+
+        var appliedCount = 0
+        var lastMessage = ""
+        for pair in changedItems {
+            let commandKey = pair.item.commandKey.isEmpty ? pair.item.key : pair.item.commandKey
+            let response = await applyDynamicSettingValue(commandKey: commandKey, value: pair.value)
+            lastMessage = response.output
+            if !response.output.lowercased().contains("unknown key")
+                && !response.output.lowercased().contains("expects")
+            {
+                appliedCount += 1
+                dynamicBaseValues[pair.item.key] = pair.value
+            } else {
+                break
+            }
+        }
+
+        dynamicStatusMessage = "Applied \(appliedCount)/\(changedItems.count). \(lastMessage)"
+    }
+
+    private func applyDynamicSettingValue(commandKey: String, value: String) async -> CommandEngineResponse {
+        let query = "set \(commandKey) \(quoteSetValue(value))"
+        return await PythonCommandService.execute(
+            query: query,
+            settings: CommandEngineSettings.current()
+        )
+    }
+
+    private func handleDynamicJSONImport(_ result: Result<[URL], Error>) {
+        guard let url = try? result.get().first else { return }
+        let _ = url.startAccessingSecurityScopedResource()
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        guard let data = try? Data(contentsOf: url) else {
+            dynamicStatusMessage = "Failed to read JSON file."
+            return
+        }
+
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let dict = object as? [String: Any]
+        else {
+            dynamicStatusMessage = "Invalid JSON format. Expect object: {\"key\": value}"
+            return
+        }
+
+        let schemaByStorageKey = Dictionary(uniqueKeysWithValues: dynamicSchema.map { ($0.key, $0) })
+        let schemaByCommandKey = Dictionary(uniqueKeysWithValues: dynamicSchema.map { ($0.commandKey, $0) })
+
+        var imported = 0
+        var skipped = 0
+        for (rawKey, rawValue) in dict {
+            let trimmedKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedKey.isEmpty else { continue }
+            let matched = schemaByStorageKey[trimmedKey] ?? schemaByCommandKey[trimmedKey]
+            guard let item = matched else {
+                skipped += 1
+                continue
+            }
+
+            let stringValue = stringifyImportedJSONValue(rawValue)
+            dynamicValues[item.key] = normalizedStoredValue(for: item, value: stringValue)
+            applyToUserDefaults(item: item, rawValue: stringValue)
+            imported += 1
+        }
+
+        dynamicStatusMessage = "Imported \(imported) settings from JSON, skipped \(skipped). Click 'Apply Changed' to persist via Python config."
+    }
+
+    private func stringifyImportedJSONValue(_ value: Any) -> String {
+        if let stringValue = value as? String {
+            return stringValue
+        }
+        if let boolValue = value as? Bool {
+            return boolValue ? "true" : "false"
+        }
+        if let intValue = value as? Int {
+            return String(intValue)
+        }
+        if let doubleValue = value as? Double {
+            if doubleValue.truncatingRemainder(dividingBy: 1) == 0 {
+                return String(Int(doubleValue))
+            }
+            return String(doubleValue)
+        }
+        return String(describing: value)
     }
 }

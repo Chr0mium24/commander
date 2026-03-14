@@ -284,9 +284,13 @@ class AppState {
             return
         }
 
-        let apiKey = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
-        let model = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
+        let geminiApiKey = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
+        let geminiModel = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
         let proxy = UserDefaults.standard.string(forKey: AppStorageKey.geminiProxy) ?? ""
+        let aiProvider = UserDefaults.standard.string(forKey: AppStorageKey.aiProvider) ?? ""
+        let aiBaseURL = UserDefaults.standard.string(forKey: AppStorageKey.aiBaseURL) ?? ""
+        let aiApiKey = UserDefaults.standard.string(forKey: AppStorageKey.aiApiKey) ?? ""
+        let aiModel = UserDefaults.standard.string(forKey: AppStorageKey.aiModel) ?? ""
 
         resultText = "Thinking..."
 
@@ -296,9 +300,13 @@ class AppState {
             do {
                 for try await chunk in GeminiStreamingService.streamResponse(
                     prompt: prompt,
-                    apiKey: apiKey,
-                    model: model,
-                    proxyURL: proxy
+                    geminiApiKey: geminiApiKey,
+                    geminiModel: geminiModel,
+                    proxyURL: proxy,
+                    aiProvider: aiProvider,
+                    aiBaseURL: aiBaseURL,
+                    aiApiKey: aiApiKey,
+                    aiModel: aiModel
                 ) {
                     if Task.isCancelled { return }
                     fullResponse += chunk
