@@ -449,28 +449,33 @@ struct ContentView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
 
-            if !session.isCollapsed {
-                Divider()
-
-                if session.runInBackground {
+            if session.runInBackground {
+                if !session.isCollapsed {
+                    Divider()
                     Text("Background process is running.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
-                } else {
-                    SwiftTermSessionView(
-                        sessionID: session.id,
-                        command: session.command,
-                        onRegisterTerminator: { id, terminate in
-                            appState.registerTerminalSessionController(sessionID: id, terminate: terminate)
-                        },
-                        onProcessTerminated: { id, exitCode, transcript in
-                            appState.completeTerminalSession(sessionID: id, exitCode: exitCode, transcript: transcript)
-                        }
-                    )
-                    .frame(minHeight: 110, maxHeight: 240)
                 }
+            } else {
+                if !session.isCollapsed {
+                    Divider()
+                }
+                SwiftTermSessionView(
+                    sessionID: session.id,
+                    command: session.command,
+                    onRegisterTerminator: { id, terminate in
+                        appState.registerTerminalSessionController(sessionID: id, terminate: terminate)
+                    },
+                    onProcessTerminated: { id, exitCode, transcript in
+                        appState.completeTerminalSession(sessionID: id, exitCode: exitCode, transcript: transcript)
+                    }
+                )
+                .frame(height: session.isCollapsed ? 0 : 170)
+                .opacity(session.isCollapsed ? 0 : 1)
+                .clipped()
+                .allowsHitTesting(!session.isCollapsed)
             }
         }
         .background(Color.primary.opacity(0.04))
@@ -686,7 +691,11 @@ private struct SwiftTermSessionView: NSViewRepresentable {
             )
 
             onRegisterTerminator(sessionID) { [weak terminal] in
-                terminal?.terminate()
+                guard let terminal else { return }
+                terminal.send(txt: "\u{03}")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+                    terminal.terminate()
+                }
             }
         }
 

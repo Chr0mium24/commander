@@ -40,6 +40,7 @@ class AppState {
     private var activeCommandTask: Task<Void, Never>?
     private var shellSessions: [UUID: ShellSession] = [:]
     private var terminalTerminators: [UUID: () -> Void] = [:]
+    private var terminalStopFallbackTasks: [UUID: Task<Void, Never>] = [:]
     private var interruptedTerminalSessions: Set<UUID> = []
     private var lastSubmitAt: Date = .distantPast
 
@@ -152,6 +153,8 @@ class AppState {
     }
 
     func stopTerminalSession(_ sessionID: UUID) {
+        scheduleTerminalStopFallback(for: sessionID)
+
         if let terminator = terminalTerminators[sessionID] {
             interruptedTerminalSessions.insert(sessionID)
             terminator()
@@ -410,6 +413,11 @@ class AppState {
     }
 
     private func terminateAllShellSessions() {
+        for task in terminalStopFallbackTasks.values {
+            task.cancel()
+        }
+        terminalStopFallbackTasks.removeAll()
+
         for shell in shellSessions.values {
             shell.terminate()
         }
@@ -423,6 +431,9 @@ class AppState {
 
     private func finishTerminalSession(sessionID: UUID, exitCode: Int32?, transcriptOverride: String?) {
         guard let session = sessionByID(sessionID) else { return }
+
+        terminalStopFallbackTasks[sessionID]?.cancel()
+        terminalStopFallbackTasks[sessionID] = nil
 
         shellSessions[sessionID] = nil
         terminalTerminators[sessionID] = nil
@@ -451,6 +462,23 @@ class AppState {
 
         finalizeCommand(type: session.historyType, input: session.historyInput, output: output)
         terminalSessions.removeAll { $0.id == sessionID }
+    }
+
+    private func scheduleTerminalStopFallback(for sessionID: UUID) {
+        terminalStopFallbackTasks[sessionID]?.cancel()
+
+        terminalStopFallbackTasks[sessionID] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            await MainActor.run {
+                guard let self else { return }
+                guard self.sessionByID(sessionID) != nil else { return }
+                self.finishTerminalSession(
+                    sessionID: sessionID,
+                    exitCode: nil,
+                    transcriptOverride: nil
+                )
+            }
+        }
     }
 
     private func extractDictionaryWord(from historyInput: String) -> String? {
