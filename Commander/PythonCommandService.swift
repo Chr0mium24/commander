@@ -67,6 +67,33 @@ struct CommandEngineSettingUpdate: Decodable {
     }
 }
 
+struct CommandEngineSettingSchemaItem: Decodable, Identifiable, Hashable {
+    let key: String
+    let commandKey: String
+    let type: String
+    let label: String
+    let group: String
+
+    var id: String { key }
+
+    private enum CodingKeys: String, CodingKey {
+        case key
+        case commandKey = "command_key"
+        case type
+        case label
+        case group
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decodeIfPresent(String.self, forKey: .key) ?? ""
+        commandKey = try container.decodeIfPresent(String.self, forKey: .commandKey) ?? ""
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? "string"
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? key
+        group = try container.decodeIfPresent(String.self, forKey: .group) ?? "general"
+    }
+}
+
 struct CommandEngineResponse: Decodable {
     let output: String
     let isAIResponse: Bool
@@ -83,6 +110,8 @@ struct CommandEngineResponse: Decodable {
     let historyInput: String
     let openURL: String?
     let settingUpdates: [CommandEngineSettingUpdate]
+    let settingSchema: [CommandEngineSettingSchemaItem]
+    let configPaths: [String: String]
     
     private enum CodingKeys: String, CodingKey {
         case output
@@ -100,6 +129,8 @@ struct CommandEngineResponse: Decodable {
         case historyInput = "history_input"
         case openURL = "open_url"
         case settingUpdates = "setting_updates"
+        case settingSchema = "setting_schema"
+        case configPaths = "config_paths"
     }
 
     init(from decoder: Decoder) throws {
@@ -119,6 +150,8 @@ struct CommandEngineResponse: Decodable {
         historyInput = try container.decodeIfPresent(String.self, forKey: .historyInput) ?? ""
         openURL = try container.decodeIfPresent(String.self, forKey: .openURL)
         settingUpdates = try container.decodeIfPresent([CommandEngineSettingUpdate].self, forKey: .settingUpdates) ?? []
+        settingSchema = try container.decodeIfPresent([CommandEngineSettingSchemaItem].self, forKey: .settingSchema) ?? []
+        configPaths = try container.decodeIfPresent([String: String].self, forKey: .configPaths) ?? [:]
     }
 
     static func failure(_ message: String) -> CommandEngineResponse {
@@ -137,7 +170,9 @@ struct CommandEngineResponse: Decodable {
             historyType: "",
             historyInput: "",
             openURL: nil,
-            settingUpdates: []
+            settingUpdates: [],
+            settingSchema: [],
+            configPaths: [:]
         )
     }
 
@@ -156,7 +191,9 @@ struct CommandEngineResponse: Decodable {
         historyType: String,
         historyInput: String,
         openURL: String?,
-        settingUpdates: [CommandEngineSettingUpdate]
+        settingUpdates: [CommandEngineSettingUpdate],
+        settingSchema: [CommandEngineSettingSchemaItem],
+        configPaths: [String: String]
     ) {
         self.output = output
         self.isAIResponse = isAIResponse
@@ -173,6 +210,8 @@ struct CommandEngineResponse: Decodable {
         self.historyInput = historyInput
         self.openURL = openURL
         self.settingUpdates = settingUpdates
+        self.settingSchema = settingSchema
+        self.configPaths = configPaths
     }
 }
 

@@ -64,6 +64,7 @@ Commands:
 - `set <key> <value>` update one setting
 - `set list` print full schema
 - `set file` print config/plugin paths
+- `set schema_json` return machine-readable schema payload
 - `run <command>` run and capture output directly
 - `run <command> &` run inside process panel (interactive/stop-able)
 - `{aliases['py']} <code>` run python snippet

@@ -29,6 +29,12 @@ struct SettingsView: View {
 
     @State private var showFolderImporter = false
     @State private var showPluginFolderImporter = false
+    @State private var dynamicSchema: [CommandEngineSettingSchemaItem] = []
+    @State private var dynamicValues: [String: String] = [:]
+    @State private var dynamicConfigPaths: [String: String] = [:]
+    @State private var dynamicStatusMessage = ""
+    @State private var isDynamicLoading = false
+    @State private var didLoadDynamicSchema = false
 
     var body: some View {
         TabView {
@@ -43,6 +49,9 @@ struct SettingsView: View {
 
             commandTab
                 .tabItem { Label("Commands", systemImage: "terminal") }
+
+            dynamicTab
+                .tabItem { Label("Dynamic", systemImage: "slider.horizontal.3") }
         }
         .frame(width: 560, height: 460)
         .padding()
@@ -231,6 +240,74 @@ struct SettingsView: View {
         }
     }
 
+    private var dynamicTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("Dynamic Settings Schema")
+                        .font(.headline)
+
+                    Spacer()
+
+                    Button("Reload Schema") {
+                        Task {
+                            await loadDynamicSchema(force: true)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if isDynamicLoading {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading schema...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !dynamicStatusMessage.isEmpty {
+                    Text(dynamicStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let configPath = dynamicConfigPaths["user_config"], !configPath.isEmpty {
+                    Text("Config: \(configPath)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if dynamicSchema.isEmpty && !isDynamicLoading {
+                    Text("No dynamic schema returned by command engine.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(groupedDynamicSchema, id: \.group) { groupBlock in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(groupBlock.group.capitalized)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        ForEach(groupBlock.items) { item in
+                            dynamicSettingRow(item)
+                                .padding(10)
+                                .background(Color.primary.opacity(0.04))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+        }
+        .task {
+            await loadDynamicSchema(force: false)
+        }
+    }
+
     @ViewBuilder
     private func aliasRow(title: String, text: Binding<String>, placeholder: String) -> some View {
         HStack {
@@ -291,5 +368,210 @@ struct SettingsView: View {
         let pluginPath = appSupport.appendingPathComponent("plugins", isDirectory: true)
         try? FileManager.default.createDirectory(at: pluginPath, withIntermediateDirectories: true)
         NSWorkspace.shared.open(pluginPath)
+    }
+
+    private var groupedDynamicSchema: [(group: String, items: [CommandEngineSettingSchemaItem])] {
+        let grouped = Dictionary(grouping: dynamicSchema) { item in
+            item.group.isEmpty ? "general" : item.group.lowercased()
+        }
+        return grouped
+            .map { key, value in
+                (
+                    group: key,
+                    items: value.sorted {
+                        let lhs = $0.label.isEmpty ? $0.commandKey : $0.label
+                        let rhs = $1.label.isEmpty ? $1.commandKey : $1.label
+                        return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                    }
+                )
+            }
+            .sorted { $0.group.localizedCaseInsensitiveCompare($1.group) == .orderedAscending }
+    }
+
+    @ViewBuilder
+    private func dynamicSettingRow(_ item: CommandEngineSettingSchemaItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(item.label.isEmpty ? item.key : item.label)
+                Spacer()
+                Text(item.commandKey)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(item.type)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if normalizedDynamicType(item.type) == "bool" {
+                Toggle("Enabled", isOn: boolBinding(for: item))
+                    .toggleStyle(.switch)
+            } else {
+                HStack(spacing: 8) {
+                    if normalizedDynamicType(item.type) == "secret" {
+                        SecureField(item.key, text: textBinding(for: item))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                    } else {
+                        TextField(item.key, text: textBinding(for: item))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                    }
+
+                    Button("Apply") {
+                        applyDynamicSetting(item)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    private func textBinding(for item: CommandEngineSettingSchemaItem) -> Binding<String> {
+        Binding(
+            get: {
+                dynamicValues[item.key] ?? initialValue(for: item)
+            },
+            set: { newValue in
+                dynamicValues[item.key] = newValue
+            }
+        )
+    }
+
+    private func boolBinding(for item: CommandEngineSettingSchemaItem) -> Binding<Bool> {
+        Binding(
+            get: {
+                boolFromString(dynamicValues[item.key] ?? initialValue(for: item))
+            },
+            set: { newValue in
+                let stringValue = newValue ? "true" : "false"
+                dynamicValues[item.key] = stringValue
+                applyDynamicSetting(item, explicitValue: stringValue)
+            }
+        )
+    }
+
+    private func initialValue(for item: CommandEngineSettingSchemaItem) -> String {
+        let defaults = UserDefaults.standard
+        let type = normalizedDynamicType(item.type)
+
+        if type == "bool" {
+            if let value = defaults.object(forKey: item.key) as? Bool {
+                return value ? "true" : "false"
+            }
+            return "false"
+        }
+
+        if type == "int" {
+            if let value = defaults.object(forKey: item.key) as? Int {
+                return "\(value)"
+            }
+            if let value = defaults.string(forKey: item.key) {
+                return value
+            }
+            return ""
+        }
+
+        return defaults.string(forKey: item.key) ?? ""
+    }
+
+    private func normalizedDynamicType(_ type: String) -> String {
+        let lowered = type.lowercased()
+        if lowered == "boolean" { return "bool" }
+        if lowered == "integer" { return "int" }
+        return lowered
+    }
+
+    private func boolFromString(_ value: String) -> Bool {
+        let lowered = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on"
+    }
+
+    private func applyDynamicSetting(_ item: CommandEngineSettingSchemaItem, explicitValue: String? = nil) {
+        let rawValue = explicitValue ?? dynamicValues[item.key] ?? initialValue(for: item)
+        dynamicValues[item.key] = rawValue
+        applyToUserDefaults(item: item, rawValue: rawValue)
+
+        let commandKey = item.commandKey.isEmpty ? item.key : item.commandKey
+        let setValue = normalizedDynamicType(item.type) == "bool" ? (boolFromString(rawValue) ? "true" : "false") : rawValue
+        let query = "set \(commandKey) \(quoteSetValue(setValue))"
+
+        Task {
+            let response = await PythonCommandService.execute(
+                query: query,
+                settings: CommandEngineSettings.current()
+            )
+            await MainActor.run {
+                dynamicStatusMessage = response.output
+            }
+        }
+    }
+
+    private func applyToUserDefaults(item: CommandEngineSettingSchemaItem, rawValue: String) {
+        let defaults = UserDefaults.standard
+        let type = normalizedDynamicType(item.type)
+
+        if type == "bool" {
+            defaults.set(boolFromString(rawValue), forKey: item.key)
+            return
+        }
+
+        if type == "int" {
+            if let intValue = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                defaults.set(intValue, forKey: item.key)
+            } else {
+                defaults.set(rawValue, forKey: item.key)
+            }
+            return
+        }
+
+        defaults.set(rawValue, forKey: item.key)
+    }
+
+    private func quoteSetValue(_ value: String) -> String {
+        if value.isEmpty {
+            return "\"\""
+        }
+        if !needsQuoting(value) {
+            return value
+        }
+        return "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+    }
+
+    private func needsQuoting(_ value: String) -> Bool {
+        value.contains(" ")
+            || value.contains("\t")
+            || value.contains("\n")
+            || value.contains("'")
+            || value.contains("\"")
+    }
+
+    @MainActor
+    private func loadDynamicSchema(force: Bool) async {
+        if isDynamicLoading {
+            return
+        }
+        if didLoadDynamicSchema && !force {
+            return
+        }
+
+        isDynamicLoading = true
+        defer { isDynamicLoading = false }
+
+        let response = await PythonCommandService.execute(
+            query: "set schema_json",
+            settings: CommandEngineSettings.current()
+        )
+
+        dynamicSchema = response.settingSchema.filter { !$0.key.isEmpty }
+        dynamicConfigPaths = response.configPaths
+        if force || dynamicValues.isEmpty {
+            var initial: [String: String] = [:]
+            for item in dynamicSchema {
+                initial[item.key] = initialValue(for: item)
+            }
+            dynamicValues = initial
+        }
+        dynamicStatusMessage = response.output
+        didLoadDynamicSchema = true
     }
 }

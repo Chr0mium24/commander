@@ -21,6 +21,8 @@ def base_response() -> dict[str, Any]:
         "history_input": "",
         "open_url": None,
         "setting_updates": [],
+        "setting_schema": [],
+        "config_paths": {},
     }
 
 
@@ -44,3 +46,14 @@ def fenced(language: str, content: str) -> str:
 
 def camel_to_snake(name: str) -> str:
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()
+
+
+def normalize_value_type(value_type: str) -> str:
+    lowered = (value_type or "").strip().lower()
+    if lowered in {"bool", "boolean"}:
+        return "bool"
+    if lowered in {"int", "integer"}:
+        return "int"
+    if lowered in {"secret", "password", "token"}:
+        return "secret"
+    return "string"

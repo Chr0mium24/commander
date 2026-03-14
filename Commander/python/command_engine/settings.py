@@ -3,9 +3,9 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
-from .constants import SETTING_KEY_MAP
+from .constants import SETTING_KEY_MAP, SETTING_SCHEMA
 from .config import config_paths, update_user_config
-from .utils import camel_to_snake, coalesce, is_truthy
+from .utils import camel_to_snake, coalesce, is_truthy, normalize_value_type
 
 
 def handle_set_command(
@@ -14,6 +14,9 @@ def handle_set_command(
     response: dict[str, Any],
     setting_schema: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    normalized_schema = normalize_setting_schema(setting_schema)
+    schema_key_map = build_schema_key_map(normalized_schema)
+
     stripped = content.strip()
     if not stripped:
         response["open_settings"] = True
@@ -37,7 +40,7 @@ def handle_set_command(
             return response
 
         key = tokens[1]
-        mapped = SETTING_KEY_MAP.get(key)
+        mapped = resolve_setting_key(key, schema_key_map)
         if not mapped:
             response["output"] = f"Unknown key: {key}"
             return response
@@ -48,12 +51,18 @@ def handle_set_command(
         return response
 
     if action in {"list", "schema", "keys"}:
-        schema = setting_schema if setting_schema is not None else []
-        response["output"] = render_setting_schema(schema)
+        response["output"] = render_setting_schema(normalized_schema)
+        return response
+
+    if action in {"schema_json", "schemajson"}:
+        response["setting_schema"] = normalized_schema
+        response["config_paths"] = config_paths()
+        response["output"] = "Schema loaded."
         return response
 
     if action in {"file", "path", "paths"}:
         paths = config_paths()
+        response["config_paths"] = paths
         response["output"] = "\n".join(
             [
                 "### Config Paths",
@@ -70,7 +79,7 @@ def handle_set_command(
         return response
 
     key = tokens[0]
-    mapped = SETTING_KEY_MAP.get(key)
+    mapped = resolve_setting_key(key, schema_key_map)
     if not mapped:
         response["output"] = f"Unknown key: {key}"
         return response
@@ -106,17 +115,68 @@ def handle_set_command(
     return response
 
 
+def normalize_setting_schema(schema: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    source = schema if schema is not None else SETTING_SCHEMA
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for item in source:
+        storage_key = str(item.get("key", "")).strip()
+        if not storage_key or storage_key in seen:
+            continue
+        seen.add(storage_key)
+
+        value_type = normalize_value_type(str(item.get("type", "string")))
+        group = str(item.get("group", "general")).strip() or "general"
+        label = str(item.get("label", storage_key)).strip() or storage_key
+        command_key = camel_to_snake(storage_key)
+        normalized.append(
+            {
+                "key": storage_key,
+                "command_key": command_key,
+                "type": value_type,
+                "group": group,
+                "label": label,
+            }
+        )
+
+    normalized.sort(key=lambda row: row["command_key"])
+    return normalized
+
+
+def build_schema_key_map(schema: list[dict[str, str]]) -> dict[str, tuple[str, str]]:
+    mapping: dict[str, tuple[str, str]] = {}
+    for item in schema:
+        storage_key = str(item.get("key", "")).strip()
+        command_key = str(item.get("command_key", "")).strip().lower()
+        value_type = normalize_value_type(str(item.get("type", "string")))
+        if value_type == "secret":
+            value_type = "string"
+
+        if storage_key:
+            mapping[storage_key] = (storage_key, value_type)
+        if command_key:
+            mapping[command_key] = (storage_key, value_type)
+    return mapping
+
+
+def resolve_setting_key(
+    key: str,
+    schema_key_map: dict[str, tuple[str, str]],
+) -> tuple[str, str] | None:
+    return SETTING_KEY_MAP.get(key) or schema_key_map.get(key.lower())
+
+
 def render_setting_schema(schema: list[dict[str, str]]) -> str:
     rows = []
-    seen: set[str] = set()
     for item in schema:
         key = str(item.get("key", "")).strip()
-        if not key or key in seen:
+        command_key = str(item.get("command_key", "")).strip()
+        if not key:
             continue
-        seen.add(key)
 
-        snake = camel_to_snake(key)
-        value_type = str(item.get("type", "string")).strip() or "string"
+        snake = command_key or camel_to_snake(key)
+        value_type = normalize_value_type(str(item.get("type", "string")).strip() or "string")
         group = str(item.get("group", "general")).strip() or "general"
         label = str(item.get("label", key)).strip() or key
         rows.append((snake, key, value_type, group, label))
