@@ -43,6 +43,7 @@ class AppState {
     private var terminalStopFallbackTasks: [UUID: Task<Void, Never>] = [:]
     private var interruptedTerminalSessions: Set<UUID> = []
     private var lastSubmitAt: Date = .distantPast
+    private var commandHistoryCursor: Int?
 
     private let minSubmitInterval: TimeInterval = 0.20
     private let routeTimeoutNanoseconds: UInt64 = 8_000_000_000
@@ -67,6 +68,7 @@ class AppState {
     }
 
     func reset() {
+        commandHistoryCursor = nil
         if !query.isEmpty {
             query = ""
         } else {
@@ -79,6 +81,7 @@ class AppState {
     }
 
     func collapseToInputOnly() {
+        commandHistoryCursor = nil
         query = ""
         resultText = ""
         isAIResponse = false
@@ -99,6 +102,7 @@ class AppState {
         let now = Date()
         guard now.timeIntervalSince(lastSubmitAt) >= minSubmitInterval else { return }
         lastSubmitAt = now
+        commandHistoryCursor = nil
 
         cancelActiveExecution(showInterruptedNote: false)
         let executionID = beginExecution()
@@ -591,6 +595,36 @@ class AppState {
         quitApp()
     }
 
+    func restorePreviousCommandResult() {
+        guard !isLoading else { return }
+        guard !history.isEmpty else { return }
+
+        let baseIndex = resolvedCommandHistoryBaseIndex(defaultValue: -1)
+        let target = min(baseIndex + 1, history.count - 1)
+        guard target >= 0, target < history.count else { return }
+        guard target != baseIndex else { return }
+
+        applyHistorySnapshot(history[target])
+        commandHistoryCursor = target
+    }
+
+    func restoreNextCommandResult() {
+        guard !isLoading else { return }
+        guard !history.isEmpty else { return }
+
+        let baseIndex = resolvedCommandHistoryBaseIndex(defaultValue: history.count)
+        let target = max(baseIndex - 1, 0)
+        guard target >= 0, target < history.count else { return }
+        guard target != baseIndex else { return }
+
+        applyHistorySnapshot(history[target])
+        commandHistoryCursor = target
+    }
+
+    func clearCommandHistoryNavigation() {
+        commandHistoryCursor = nil
+    }
+
     @MainActor
     private func finalizeCommand(type: String, input: String, output: String) {
         isLoading = false
@@ -605,6 +639,7 @@ class AppState {
     private func saveHistoryItem(type: String, input: String, output: String) {
         let item = HistoryItem(type: type, query: input, result: output, timestamp: Date())
         history.insert(item, at: 0)
+        commandHistoryCursor = nil
 
         let limit = UserDefaults.standard.integer(forKey: AppStorageKey.historyLimit)
         let actualLimit = limit > 0 ? limit : 10
@@ -721,12 +756,34 @@ class AppState {
 
     func deleteHistoryItem(id: UUID) {
         history.removeAll { $0.id == id }
+        if let cursor = commandHistoryCursor {
+            commandHistoryCursor = cursor < history.count ? cursor : nil
+        }
         persistHistory()
     }
 
     func restoreHistoryItem(_ item: HistoryItem) {
+        applyHistorySnapshot(item)
+        commandHistoryCursor = history.firstIndex(of: item)
+    }
+
+    private func resolvedCommandHistoryBaseIndex(defaultValue: Int) -> Int {
+        if let cursor = commandHistoryCursor {
+            return cursor
+        }
+
+        if let matched = history.firstIndex(where: { $0.query == query && $0.result == resultText }) {
+            return matched
+        }
+
+        return defaultValue
+    }
+
+    private func applyHistorySnapshot(_ item: HistoryItem) {
         query = item.query
         resultText = item.result
+        isAIResponse = ["ai", "def", "loc"].contains(item.type.lowercased())
         showHistoryView = false
+        isLoading = false
     }
 }

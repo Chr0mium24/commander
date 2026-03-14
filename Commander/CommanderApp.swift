@@ -35,5 +35,18 @@ struct CommanderApp: App {
         Settings {
             SettingsView()
         }
+        .commands {
+            CommandMenu("Commander") {
+                Button("Previous Command") {
+                    appState.restorePreviousCommandResult()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .option])
+
+                Button("Next Command") {
+                    appState.restoreNextCommandResult()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .option, .shift])
+            }
+        }
     }
 }

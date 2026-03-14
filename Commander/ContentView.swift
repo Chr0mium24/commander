@@ -17,6 +17,9 @@ struct ContentView: View {
     @FocusState private var focusedInput: InputFocusField?
     @State private var multilineInput = false
     @State private var inputText: String = ""
+    @State private var inputHistoryCursor: Int?
+    @State private var inputHistoryDraft: String = ""
+    @State private var isApplyingInputHistoryNavigation = false
     @State private var processBaseHeight: CGFloat = 190
     @GestureState private var processDragTranslation: CGFloat = 0
     
@@ -38,6 +41,12 @@ struct ContentView: View {
 
     private var runningTerminalSessions: [TerminalSessionItem] {
         appState.terminalSessions.filter { $0.isRunning }
+    }
+
+    private var inputHistoryQueries: [String] {
+        appState.history
+            .map(\.query)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     private var detectedCodeBlocks: [DetectedCodeBlock] {
@@ -130,6 +139,10 @@ struct ContentView: View {
             syncWindowHeightWithState(animated: false)
         }
         .onChange(of: inputText) { _, newValue in
+            if !isApplyingInputHistoryNavigation, inputHistoryCursor != nil {
+                inputHistoryCursor = nil
+                inputHistoryDraft = ""
+            }
             guard !multilineInput else { return }
             if newValue.contains("\n") || newValue.contains("\r") {
                 multilineInput = true
@@ -201,6 +214,16 @@ struct ContentView: View {
                     }
                     .onSubmit {
                         submitInput()
+                    }
+                    .onMoveCommand { direction in
+                        switch direction {
+                        case .up:
+                            browseInputHistoryBackward()
+                        case .down:
+                            browseInputHistoryForward()
+                        default:
+                            break
+                        }
                     }
                     .onExitCommand {
                         handleExitCommand()
@@ -406,10 +429,26 @@ struct ContentView: View {
 
         appState.query = normalized
         inputText = normalized
+        inputHistoryCursor = nil
+        inputHistoryDraft = ""
+        appState.clearCommandHistoryNavigation()
         appState.executeCommand()
     }
     
     private func handleExitCommand() {
+        if !runningTerminalSessions.isEmpty {
+            if multilineInput {
+                collapseToSingleLine()
+            } else {
+                inputText = ""
+                appState.query = ""
+            }
+            inputHistoryCursor = nil
+            inputHistoryDraft = ""
+            focusCurrentInput()
+            return
+        }
+
         if shouldShowOutputSection {
             appState.collapseToInputOnly()
             inputText = ""
@@ -419,6 +458,8 @@ struct ContentView: View {
             inputText = appState.query
         }
         multilineInput = false
+        inputHistoryCursor = nil
+        inputHistoryDraft = ""
         focusCurrentInput()
     }
 
@@ -453,6 +494,49 @@ struct ContentView: View {
             .replacingOccurrences(of: "\r\n", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
+        focusCurrentInput()
+    }
+
+    private func browseInputHistoryBackward() {
+        guard !inputHistoryQueries.isEmpty else { return }
+
+        if inputHistoryCursor == nil {
+            guard inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            inputHistoryDraft = inputText
+            inputHistoryCursor = 0
+        } else if let cursor = inputHistoryCursor, cursor < inputHistoryQueries.count - 1 {
+            inputHistoryCursor = cursor + 1
+        }
+
+        guard let cursor = inputHistoryCursor else { return }
+        applyInputHistoryQuery(inputHistoryQueries[cursor])
+    }
+
+    private func browseInputHistoryForward() {
+        guard let cursor = inputHistoryCursor else { return }
+
+        if cursor > 0 {
+            inputHistoryCursor = cursor - 1
+            if let next = inputHistoryCursor {
+                applyInputHistoryQuery(inputHistoryQueries[next])
+            }
+            return
+        }
+
+        inputHistoryCursor = nil
+        applyInputHistoryQuery(inputHistoryDraft)
+    }
+
+    private func applyInputHistoryQuery(_ value: String) {
+        isApplyingInputHistoryNavigation = true
+        inputText = value
+        appState.query = value
+        appState.resultText = ""
+        appState.isAIResponse = false
+        appState.showHistoryView = false
+        appState.clearCommandHistoryNavigation()
+        multilineInput = value.contains("\n") || value.contains("\r")
+        isApplyingInputHistoryNavigation = false
         focusCurrentInput()
     }
 
