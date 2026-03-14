@@ -174,6 +174,7 @@ def load_builtin_plugins(registry: CommandRegistry, context: EngineContext) -> N
         "command_engine.plugins.shell",
         "command_engine.plugins.web",
         "command_engine.plugins.ai",
+        "command_engine.plugins.read",
     )
 
     for module_name in modules:

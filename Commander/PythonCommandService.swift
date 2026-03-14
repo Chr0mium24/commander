@@ -235,7 +235,7 @@ struct CommandEngineResponse: Decodable {
 }
 
 struct PythonCommandService {
-    private static let engineInterpreter = "/usr/bin/python3"
+    fileprivate static let defaultInterpreter = "/usr/bin/python3"
 
     static func execute(query: String, settings: CommandEngineSettings) async -> CommandEngineResponse {
         guard let scriptPath = resolveEngineScriptPath() else {
@@ -250,9 +250,13 @@ struct PythonCommandService {
             return .failure("Failed to encode command request")
         }
 
-        let interpreter = engineInterpreter
+        let fallbackInterpreter = settings.pythonPath
         let runResult = await Task.detached {
-            PythonEngineRunner.run(interpreter: interpreter, scriptPath: scriptPath, payload: payload)
+            PythonEngineRunner.run(
+                scriptPath: scriptPath,
+                payload: payload,
+                fallbackInterpreter: fallbackInterpreter
+            )
         }.value
 
         switch runResult {
@@ -307,7 +311,62 @@ private enum EngineRunResult: Sendable {
 }
 
 private enum PythonEngineRunner {
-    nonisolated static func run(interpreter: String, scriptPath: String, payload: String) -> EngineRunResult {
+    private static let envExecutable = "/usr/bin/env"
+
+    nonisolated static func run(
+        scriptPath: String,
+        payload: String,
+        fallbackInterpreter: String
+    ) -> EngineRunResult {
+        switch runWithUV(scriptPath: scriptPath, payload: payload) {
+        case .success(let raw):
+            return .success(raw)
+        case .missingTool:
+            break
+        case .failure(let message):
+            return .failure(message)
+        }
+
+        let interpreter = resolvedInterpreter(from: fallbackInterpreter)
+        return runWithInterpreter(interpreter: interpreter, scriptPath: scriptPath, payload: payload)
+    }
+
+    nonisolated private static func runWithUV(scriptPath: String, payload: String) -> UVRunResult {
+        var arguments = ["uv", "run"]
+        if let projectDir = resolveUVProjectDir(scriptPath: scriptPath) {
+            arguments += ["--project", projectDir]
+        }
+        arguments += ["python", scriptPath, payload]
+
+        let outcome = runProcess(executable: envExecutable, arguments: arguments)
+        switch outcome {
+        case .launchFailed(let errorMessage):
+            return .failure("Failed to run command engine via uv: \(errorMessage)")
+        case .completed(let status, let output):
+            if status == 0 {
+                let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !raw.isEmpty else {
+                    return .failure("Command engine returned empty output")
+                }
+                return .success(raw)
+            }
+
+            if looksLikeMissingUV(status: status, output: output) {
+                return .missingTool
+            }
+
+            let message = output.isEmpty
+                ? "uv run failed with exit code \(status)."
+                : output
+            return .failure("Failed to run command engine via uv:\n\(message)")
+        }
+    }
+
+    nonisolated private static func runWithInterpreter(
+        interpreter: String,
+        scriptPath: String,
+        payload: String
+    ) -> EngineRunResult {
         let process = Process()
         let outputPipe = Pipe()
 
@@ -332,4 +391,101 @@ private enum PythonEngineRunner {
             return .failure("Failed to run command engine: \(error.localizedDescription)")
         }
     }
+
+    nonisolated private static func resolvedInterpreter(from configured: String) -> String {
+        let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return PythonCommandService.defaultInterpreter
+        }
+        guard trimmed.hasPrefix("/") else {
+            return PythonCommandService.defaultInterpreter
+        }
+        guard FileManager.default.fileExists(atPath: trimmed) else {
+            return PythonCommandService.defaultInterpreter
+        }
+        return trimmed
+    }
+
+    nonisolated private static func resolveUVProjectDir(scriptPath: String) -> String? {
+        let fileManager = FileManager.default
+
+        var candidates: [String] = []
+        if let envPath = ProcessInfo.processInfo.environment["COMMANDER_UV_PROJECT"],
+           !envPath.isEmpty {
+            candidates.append(envPath)
+        }
+
+        candidates.append(fileManager.currentDirectoryPath)
+        candidates.append(
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .path
+        )
+
+        var currentURL = URL(fileURLWithPath: scriptPath).deletingLastPathComponent()
+        for _ in 0..<8 {
+            candidates.append(currentURL.path)
+            let parent = currentURL.deletingLastPathComponent()
+            if parent.path == currentURL.path {
+                break
+            }
+            currentURL = parent
+        }
+
+        var seen = Set<String>()
+        for path in candidates {
+            let normalized = URL(fileURLWithPath: path).standardized.path
+            guard seen.insert(normalized).inserted else { continue }
+            let pyprojectPath = URL(fileURLWithPath: normalized)
+                .appendingPathComponent("pyproject.toml")
+                .path
+            if fileManager.fileExists(atPath: pyprojectPath) {
+                return normalized
+            }
+        }
+
+        return nil
+    }
+
+    nonisolated private static func looksLikeMissingUV(status: Int32, output: String) -> Bool {
+        guard status == 127 || status == 126 else { return false }
+        let lowered = output.lowercased()
+        return lowered.contains("uv: no such file")
+            || lowered.contains("command not found")
+            || lowered.contains("can't find")
+    }
+
+    nonisolated private static func runProcess(
+        executable: String,
+        arguments: [String]
+    ) -> ProcessRunOutcome {
+        let process = Process()
+        let outputPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .completed(status: process.terminationStatus, output: output)
+        } catch {
+            return .launchFailed("Process launch failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+private enum UVRunResult {
+    case success(String)
+    case missingTool
+    case failure(String)
+}
+
+private enum ProcessRunOutcome {
+    case completed(status: Int32, output: String)
+    case launchFailed(String)
 }

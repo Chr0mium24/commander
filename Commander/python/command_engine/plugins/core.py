@@ -55,9 +55,11 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
 
 def handle_help(context: EngineContext, content: str) -> None:
     entries = []
+    schema = None
     if context.registry is not None:
         entries = context.registry.help_entries()
-    context.response["output"] = help_text(context.aliases, entries)
+        schema = context.registry.setting_schema()
+    context.response["output"] = help_text(context.aliases, entries, setting_schema=schema)
 
 
 def handle_hist(context: EngineContext, content: str) -> None:

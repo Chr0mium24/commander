@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
+
+import requests
 
 
 def register(registry, context=None):
@@ -41,25 +41,23 @@ def handle_edge_chat(context, content: str):
         "messages": [{"role": "user", "content": prompt}],
     }
 
-    request = urllib.request.Request(
-        url=base_url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        context.response["output"] = f"HTTP {exc.code}: {body}"
-        return
-    except Exception as exc:  # noqa: BLE001
+        response = requests.post(
+            base_url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60,
+        )
+        raw = response.text
+    except requests.RequestException as exc:
         context.response["output"] = f"Request failed: {exc}"
+        return
+
+    if response.status_code >= 400:
+        context.response["output"] = f"HTTP {response.status_code}: {raw}"
         return
 
     try:

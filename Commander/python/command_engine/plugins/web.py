@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import urllib.parse
+import requests
 
 from ..runtime import EngineContext
 from ..plugin_registry import CommandRegistry
@@ -26,8 +26,8 @@ def handle_search(context: EngineContext, content: str) -> None:
         context.response["output"] = f"Usage: {alias_ser} <search terms>"
         return
 
-    encoded = urllib.parse.quote_plus(term)
-    url = f"https://www.google.com/search?q={encoded}"
+    request = requests.Request("GET", "https://www.google.com/search", params={"q": term}).prepare()
+    url = request.url or "https://www.google.com/search"
     context.response["open_url"] = url
     context.response["output"] = f"Opened Web Search: {url}"
     context.response["history_type"] = "ser"

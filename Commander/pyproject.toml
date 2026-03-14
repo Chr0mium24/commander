@@ -1,0 +1,11 @@
+[project]
+name = "commander-engine"
+version = "0.1.0"
+description = "Python command engine for Commander"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "requests>=2.32.0",
+]
+
+[tool.uv]
+package = false

@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var inputHistoryCursor: Int?
     @State private var inputHistoryDraft: String = ""
     @State private var isApplyingInputHistoryNavigation = false
+    @State private var showOutputTools = false
     @State private var processBaseHeight: CGFloat = 190
     @GestureState private var processDragTranslation: CGFloat = 0
     
@@ -74,6 +75,10 @@ struct ContentView: View {
 
     private var shouldShowOutputSection: Bool {
         hasVisibleHistory || !runningTerminalSessions.isEmpty || appState.isLoading || hasVisibleResultText
+    }
+
+    private var shouldShowOutputTools: Bool {
+        appState.isAIResponse && !appState.isLoading && !appState.resultText.isEmpty
     }
 
     private var glassBackground: some View {
@@ -172,6 +177,11 @@ struct ContentView: View {
             if newValue {
                 openSettings()
                 appState.shouldOpenSettings = false
+            }
+        }
+        .onChange(of: appState.isLoading) { _, isLoading in
+            if isLoading {
+                showOutputTools = false
             }
         }
     }
@@ -302,74 +312,55 @@ struct ContentView: View {
                                     }
                                 }
 
-                                if appState.isAIResponse && !appState.isLoading && !appState.resultText.isEmpty {
-                                    Divider()
-                                        .padding(.vertical, 8)
-
-                                    HStack(spacing: 12) {
-                                        Spacer()
-                                        Button(action: {
-                                            if let attributed = try? AttributedString(markdown: appState.resultText) {
-                                                appState.copyToClipboard(String(attributed.characters))
-                                            } else {
-                                                appState.copyToClipboard(appState.resultText)
-                                            }
-                                        }) {
-                                            Label("Copy Text", systemImage: "doc.on.doc")
-                                                .font(.caption)
-                                        }
-                                        .buttonStyle(.bordered)
-
-                                        Button(action: {
-                                            appState.copyToClipboard(appState.resultText)
-                                        }) {
-                                            Label("Copy Markdown", systemImage: "text.aligncenter")
-                                                .font(.caption)
-                                        }
-                                        .buttonStyle(.bordered)
-                                    }
-                                }
-
-                                if appState.isAIResponse && !appState.isLoading && !detectedCodeBlocks.isEmpty {
-                                    Divider()
-                                        .padding(.vertical, 8)
-
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text("Code Blocks")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-
-                                        ForEach(detectedCodeBlocks) { block in
+                                if shouldShowOutputTools {
+                                    DisclosureGroup(isExpanded: $showOutputTools) {
+                                        VStack(alignment: .leading, spacing: 8) {
                                             HStack(spacing: 8) {
-                                                Text(block.title)
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                                    .lineLimit(1)
-
-                                                Spacer()
-
-                                                Button("Copy Code") {
-                                                    appState.copyToClipboard(block.code)
+                                                Button("Copy Text") {
+                                                    if let attributed = try? AttributedString(markdown: appState.resultText) {
+                                                        appState.copyToClipboard(String(attributed.characters))
+                                                    } else {
+                                                        appState.copyToClipboard(appState.resultText)
+                                                    }
                                                 }
                                                 .font(.caption)
                                                 .buttonStyle(.bordered)
 
-                                                if isRunnableCodeLanguage(block.language) {
-                                                    Button("Run") {
+                                                Button("Copy Markdown") {
+                                                    appState.copyToClipboard(appState.resultText)
+                                                }
+                                                .font(.caption)
+                                                .buttonStyle(.bordered)
+
+                                                if let firstRunnable = detectedCodeBlocks.first(where: { isRunnableCodeLanguage($0.language) }) {
+                                                    Button("Run First Code") {
                                                         appState.runGeneratedCode(
-                                                            language: block.language,
-                                                            code: block.code
+                                                            language: firstRunnable.language,
+                                                            code: firstRunnable.code
                                                         )
                                                     }
                                                     .font(.caption)
                                                     .buttonStyle(.borderedProminent)
                                                 }
                                             }
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 8)
-                                            .background(Color.primary.opacity(0.04))
-                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                                            if !detectedCodeBlocks.isEmpty {
+                                                Menu("Copy Code Block") {
+                                                    ForEach(Array(detectedCodeBlocks.enumerated()), id: \.element.id) { index, block in
+                                                        let language = block.language.isEmpty ? "code" : block.language
+                                                        Button("#\(index + 1) \(language)") {
+                                                            appState.copyToClipboard(block.code)
+                                                        }
+                                                    }
+                                                }
+                                                .font(.caption)
+                                            }
                                         }
+                                        .padding(.top, 6)
+                                    } label: {
+                                        Text("Tools")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
                             }

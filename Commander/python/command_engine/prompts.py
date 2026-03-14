@@ -28,11 +28,16 @@ def is_single_word(text: str) -> bool:
     return re.fullmatch(r"[A-Za-z][A-Za-z'\-]*", text) is not None
 
 
-def help_text(aliases: dict[str, str], commands: list[CommandHelpEntry]) -> str:
+def help_text(
+    aliases: dict[str, str],
+    commands: list[CommandHelpEntry],
+    setting_schema: list[dict[str, str]] | None = None,
+) -> str:
+    source_schema = setting_schema if setting_schema is not None else SETTING_SCHEMA
     key_list = sorted(
         {
             camel_to_snake(str(item.get("key", "")))
-            for item in SETTING_SCHEMA
+            for item in source_schema
             if item.get("key")
         }
     )
