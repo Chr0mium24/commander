@@ -61,6 +61,12 @@ if [[ ! -d "${PROJECT_PATH}" ]]; then
   exit 1
 fi
 
+LOCAL_VENV_PATH="${ROOT_DIR}/Commander/.venv"
+if [[ -d "${LOCAL_VENV_PATH}" ]]; then
+  echo "==> Removing local virtualenv to avoid Xcode resource collisions: ${LOCAL_VENV_PATH}"
+  rm -rf "${LOCAL_VENV_PATH}"
+fi
+
 echo "==> Building ${SCHEME} (${CONFIGURATION})"
 XCBUILD_CMD=(
   xcodebuild
