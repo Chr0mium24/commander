@@ -308,7 +308,13 @@ struct ContentView: View {
                                     } else if !appState.resultText.isEmpty {
                                         MarkdownResultView(
                                             resultText: appState.resultText,
-                                            colorScheme: colorScheme
+                                            colorScheme: colorScheme,
+                                            onCopyCode: { code in
+                                                appState.copyToClipboard(code)
+                                            },
+                                            onRunCode: { language, code in
+                                                appState.runGeneratedCode(language: language, code: code)
+                                            }
                                         )
                                     }
                                 }
@@ -332,29 +338,17 @@ struct ContentView: View {
                                                 }
                                                 .font(.caption)
                                                 .buttonStyle(.bordered)
-
-                                                if let firstRunnable = detectedCodeBlocks.first(where: { isRunnableCodeLanguage($0.language) }) {
-                                                    Button("Run First Code") {
-                                                        appState.runGeneratedCode(
-                                                            language: firstRunnable.language,
-                                                            code: firstRunnable.code
-                                                        )
-                                                    }
-                                                    .font(.caption)
-                                                    .buttonStyle(.borderedProminent)
-                                                }
                                             }
 
-                                            if !detectedCodeBlocks.isEmpty {
-                                                Menu("Copy Code Block") {
-                                                    ForEach(Array(detectedCodeBlocks.enumerated()), id: \.element.id) { index, block in
-                                                        let language = block.language.isEmpty ? "code" : block.language
-                                                        Button("#\(index + 1) \(language)") {
-                                                            appState.copyToClipboard(block.code)
-                                                        }
-                                                    }
+                                            if let firstRunnable = detectedCodeBlocks.first(where: { isRunnableCodeLanguage($0.language) }) {
+                                                Button("Run First Code") {
+                                                    appState.runGeneratedCode(
+                                                        language: firstRunnable.language,
+                                                        code: firstRunnable.code
+                                                    )
                                                 }
                                                 .font(.caption)
+                                                .buttonStyle(.borderedProminent)
                                             }
                                         }
                                         .padding(.top, 6)
@@ -645,15 +639,6 @@ private struct DetectedCodeBlock: Identifiable {
     let id: Int
     let language: String
     let code: String
-    let preview: String
-
-    var title: String {
-        let languageText = language.isEmpty ? "code" : language
-        if preview.isEmpty {
-            return languageText
-        }
-        return "\(languageText): \(preview)"
-    }
 }
 
 private enum MarkdownCodeBlockExtractor {
@@ -684,21 +669,11 @@ private enum MarkdownCodeBlockExtractor {
                 continue
             }
 
-            let firstLine = code.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? ""
-            let preview = firstLine.trimmingCharacters(in: .whitespaces)
-            let clippedPreview: String
-            if preview.count > 46 {
-                clippedPreview = String(preview.prefix(46)) + "..."
-            } else {
-                clippedPreview = preview
-            }
-
             blocks.append(
                 DetectedCodeBlock(
                     id: index,
                     language: language,
-                    code: code,
-                    preview: clippedPreview
+                    code: code
                 )
             )
         }
@@ -707,16 +682,17 @@ private enum MarkdownCodeBlockExtractor {
     }
 }
 
-private struct MarkdownResultView: View, Equatable {
+private struct MarkdownResultView: View {
     let resultText: String
     let colorScheme: ColorScheme
-    
-    static func == (lhs: MarkdownResultView, rhs: MarkdownResultView) -> Bool {
-        lhs.resultText == rhs.resultText && lhs.colorScheme == rhs.colorScheme
-    }
-    
+    let onCopyCode: (String) -> Void
+    let onRunCode: (String, String) -> Void
+
     var body: some View {
         Markdown(resultText)
+            .markdownBlockStyle(\.codeBlock) { configuration in
+                codeBlock(configuration)
+            }
             .markdownTheme(.adaptiveTheme(colorScheme: colorScheme))
             .markdownCodeSyntaxHighlighter(
                 colorScheme == .dark
@@ -724,6 +700,77 @@ private struct MarkdownResultView: View, Equatable {
                     : SplashCodeSyntaxHighlighter.basicLight
             )
             .textSelection(.enabled)
+            .id(resultText)
+    }
+
+    @ViewBuilder
+    private func codeBlock(_ configuration: CodeBlockConfiguration) -> some View {
+        let language = normalizedLanguage(from: configuration.language)
+        let runnable = isRunnableCodeLanguage(language)
+
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(language.isEmpty ? "code" : language)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Spacer()
+
+                Button {
+                    onCopyCode(configuration.content)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help("Copy code")
+
+                if runnable {
+                    Button {
+                        onRunCode(language, configuration.content)
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .help("Run code")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.05))
+            .textSelection(.disabled)
+
+            Divider()
+
+            ScrollView(.horizontal) {
+                configuration.label
+                    .relativeLineSpacing(.em(0.25))
+                    .markdownTextStyle {
+                        FontFamilyVariant(.monospaced)
+                        FontSize(.em(0.9))
+                    }
+                    .padding(10)
+            }
+        }
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .markdownMargin(top: .zero, bottom: .em(0.9))
+    }
+
+    private func normalizedLanguage(from fenceInfo: String?) -> String {
+        guard let raw = fenceInfo?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return ""
+        }
+        let token = raw.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? raw
+        return token.lowercased()
+    }
+
+    private func isRunnableCodeLanguage(_ language: String) -> Bool {
+        ["python", "py", "bash", "sh", "zsh", "shell"].contains(language)
     }
 }
 

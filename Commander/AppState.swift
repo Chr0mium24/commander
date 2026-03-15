@@ -668,13 +668,22 @@ class AppState {
         let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCode.isEmpty else { return }
 
-        guard let command = buildRunCommandForGeneratedCode(language: language, code: trimmedCode) else {
+        guard let runCommand = buildRunCommandForGeneratedCode(language: language, code: trimmedCode) else {
             resultText = "Unsupported code language. Use python/bash/sh/zsh."
             isLoading = false
             return
         }
 
-        executeCommand(queryOverride: command)
+        let normalizedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let historyInput = normalizedLanguage.isEmpty ? "run code" : "run \(normalizedLanguage) code"
+        let pausedCommand = wrapCommandWithPause(runCommand)
+
+        startShellSession(
+            command: pausedCommand,
+            runInBackground: false,
+            historyType: "run",
+            historyInput: historyInput
+        )
     }
 
     private func buildRunCommandForGeneratedCode(language: String, code: String) -> String? {
@@ -701,23 +710,34 @@ class AppState {
                 return nil
             }
             let interpreter = UserDefaults.standard.string(forKey: AppStorageKey.pythonPath) ?? "/usr/bin/python3"
-            return "run \(shellQuote(interpreter)) \(shellQuote(fileURL.path))"
+            return "\(shellQuote(interpreter)) \(shellQuote(fileURL.path))"
 
         case "bash", "sh", "shell":
             guard let fileURL = writeGeneratedScript(code: code, fileExtension: "sh") else {
                 return nil
             }
-            return "run /bin/bash \(shellQuote(fileURL.path))"
+            return "/bin/bash \(shellQuote(fileURL.path))"
 
         case "zsh":
             guard let fileURL = writeGeneratedScript(code: code, fileExtension: "sh") else {
                 return nil
             }
-            return "run /bin/zsh \(shellQuote(fileURL.path))"
+            return "/bin/zsh \(shellQuote(fileURL.path))"
 
         default:
             return nil
         }
+    }
+
+    private func wrapCommandWithPause(_ command: String) -> String {
+        """
+        \(command)
+        __commander_status=$?
+        printf '\\n[Done] Press any key to close...'
+        read -rsk 1 __commander_key
+        printf '\\n'
+        exit $__commander_status
+        """
     }
 
     private func writeGeneratedScript(code: String, fileExtension: String) -> URL? {
