@@ -74,17 +74,69 @@ def handle_fallback(context: EngineContext, query: str) -> bool:
 
 
 def _route_dictionary(context: EngineContext, word: str) -> None:
+    ai_request = resolve_ai_request(context.settings)
     context.response["defer_ai"] = True
     context.response["ai_prompt"] = dictionary_prompt(word)
     context.response["output"] = "Thinking..."
     context.response["history_type"] = "def"
+    apply_ai_request(context, ai_request)
 
 
 def _route_ask(context: EngineContext, prompt: str) -> None:
+    ai_request = resolve_ai_request(context.settings)
     context.response["defer_ai"] = True
     context.response["ai_prompt"] = prompt
     context.response["output"] = "Thinking..."
     context.response["history_type"] = "ai"
+    apply_ai_request(context, ai_request)
+
+
+def resolve_ai_request(settings: dict[str, object]) -> dict[str, str]:
+    provider = str(settings.get("aiProvider") or "").strip().lower()
+    base_url = str(settings.get("aiBaseURL") or "").strip()
+    ai_api_key = str(settings.get("aiApiKey") or "").strip()
+    ai_model = str(settings.get("aiModel") or "").strip()
+
+    gemini_api_key = str(settings.get("geminiApiKey") or "").strip()
+    gemini_model = str(settings.get("geminiModel") or "").strip() or "gemini-1.5-flash"
+    proxy_url = str(settings.get("geminiProxy") or "").strip()
+
+    use_gemini = (not provider and not base_url) or provider == "gemini"
+    if use_gemini:
+        return {
+            "kind": "gemini",
+            "provider": "gemini",
+            "base_url": "https://generativelanguage.googleapis.com",
+            "api_key": gemini_api_key,
+            "model": gemini_model,
+            "proxy_url": proxy_url,
+        }
+
+    normalized_provider = provider or "openai_compatible"
+    resolved_base_url = base_url or default_openai_base_url(normalized_provider)
+    return {
+        "kind": "openai_compatible",
+        "provider": normalized_provider,
+        "base_url": resolved_base_url,
+        "api_key": ai_api_key,
+        "model": ai_model,
+        "proxy_url": proxy_url,
+    }
+
+
+def default_openai_base_url(provider: str) -> str:
+    if provider in {"edge", "edgefn"}:
+        return "https://api.edgefn.net/v1/chat/completions"
+    return "https://api.openai.com/v1/chat/completions"
+
+
+def apply_ai_request(context: EngineContext, request: dict[str, str]) -> None:
+    context.response["ai_request_kind"] = request.get("kind", "")
+    context.response["ai_request_provider"] = request.get("provider", "")
+    context.response["ai_request_base_url"] = request.get("base_url", "")
+    context.response["ai_request_api_key"] = request.get("api_key", "")
+    context.response["ai_request_model"] = request.get("model", "")
+    context.response["ai_request_proxy_url"] = request.get("proxy_url", "")
 
 
 def render_ai_status(context: EngineContext) -> str:

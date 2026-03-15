@@ -260,7 +260,13 @@ class AppState {
         if response.deferAI {
             let type = response.historyType.isEmpty ? "ai" : response.historyType
             let input = response.historyInput.isEmpty ? originalQuery : response.historyInput
-            streamAIResponse(prompt: response.aiPrompt, historyType: type, historyInput: input, executionID: executionID)
+            streamAIResponse(
+                prompt: response.aiPrompt,
+                historyType: type,
+                historyInput: input,
+                executionID: executionID,
+                aiRequest: response.aiRequest
+            )
             return
         }
 
@@ -281,20 +287,18 @@ class AppState {
         isLoading = false
     }
 
-    private func streamAIResponse(prompt: String, historyType: String, historyInput: String, executionID: UUID) {
+    private func streamAIResponse(
+        prompt: String,
+        historyType: String,
+        historyInput: String,
+        executionID: UUID,
+        aiRequest: CommandEngineAIRequest
+    ) {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             resultText = "Error: Missing AI prompt."
             isLoading = false
             return
         }
-
-        let geminiApiKey = UserDefaults.standard.string(forKey: AppStorageKey.geminiKey) ?? ""
-        let geminiModel = UserDefaults.standard.string(forKey: AppStorageKey.geminiModel) ?? "gemini-1.5-flash"
-        let proxy = UserDefaults.standard.string(forKey: AppStorageKey.geminiProxy) ?? ""
-        let aiProvider = UserDefaults.standard.string(forKey: AppStorageKey.aiProvider) ?? ""
-        let aiBaseURL = UserDefaults.standard.string(forKey: AppStorageKey.aiBaseURL) ?? ""
-        let aiApiKey = UserDefaults.standard.string(forKey: AppStorageKey.aiApiKey) ?? ""
-        let aiModel = UserDefaults.standard.string(forKey: AppStorageKey.aiModel) ?? ""
 
         resultText = "Thinking..."
 
@@ -302,15 +306,18 @@ class AppState {
             var fullResponse = ""
 
             do {
+                let resolvedRequest = try GeminiStreamingService.resolveRequest(
+                    kind: aiRequest.kind,
+                    provider: aiRequest.provider,
+                    baseURL: aiRequest.baseURL,
+                    apiKey: aiRequest.apiKey,
+                    model: aiRequest.model,
+                    proxyURL: aiRequest.proxyURL
+                )
+
                 for try await chunk in GeminiStreamingService.streamResponse(
                     prompt: prompt,
-                    geminiApiKey: geminiApiKey,
-                    geminiModel: geminiModel,
-                    proxyURL: proxy,
-                    aiProvider: aiProvider,
-                    aiBaseURL: aiBaseURL,
-                    aiApiKey: aiApiKey,
-                    aiModel: aiModel
+                    request: resolvedRequest
                 ) {
                     if Task.isCancelled { return }
                     fullResponse += chunk

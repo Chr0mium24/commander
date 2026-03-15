@@ -3,6 +3,7 @@ import MarkdownUI
 import Splash
 import AppKit
 import SwiftTerm
+import Darwin
 
 struct ContentView: View {
     private let compactWindowHeight: CGFloat = 40
@@ -915,9 +916,27 @@ private struct SwiftTermSessionView: NSViewRepresentable {
 
             onRegisterTerminator(sessionID) { [weak terminal] in
                 guard let terminal else { return }
+                let shellPid = terminal.process.shellPid
                 terminal.send(txt: "\u{03}")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+                    self.terminateProcessTree(shellPid: shellPid)
                     terminal.terminate()
+                }
+            }
+        }
+
+        private func terminateProcessTree(shellPid: pid_t) {
+            guard shellPid > 0 else { return }
+
+            if kill(-shellPid, SIGTERM) != 0 {
+                _ = kill(shellPid, SIGTERM)
+            }
+
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.45) {
+                if kill(-shellPid, 0) == 0 {
+                    _ = kill(-shellPid, SIGKILL)
+                } else if kill(shellPid, 0) == 0 {
+                    _ = kill(shellPid, SIGKILL)
                 }
             }
         }

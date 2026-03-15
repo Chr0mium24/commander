@@ -172,6 +172,7 @@ def load_builtin_plugins(registry: CommandRegistry, context: EngineContext) -> N
     modules = (
         "command_engine.plugins.core",
         "command_engine.plugins.shell",
+        "command_engine.plugins.music",
         "command_engine.plugins.web",
         "command_engine.plugins.ai",
         "command_engine.plugins.read",

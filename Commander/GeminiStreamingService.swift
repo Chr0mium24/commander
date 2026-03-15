@@ -1,33 +1,108 @@
 import Foundation
 
 struct GeminiStreamingService {
+    enum RequestKind: String, Sendable {
+        case gemini
+        case openAICompatible = "openai_compatible"
+    }
+
+    struct AIRequest: Sendable {
+        let kind: RequestKind
+        let provider: String
+        let baseURL: String
+        let apiKey: String
+        let model: String
+        let proxyURL: String
+    }
+
+    static func resolveRequest(
+        kind: String,
+        provider: String,
+        baseURL: String,
+        apiKey: String,
+        model: String,
+        proxyURL: String
+    ) throws -> AIRequest {
+        let normalizedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let requestKind: RequestKind
+        if normalizedKind.isEmpty {
+            let normalizedProviderForInference = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let trimmedBaseURLForInference = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if normalizedProviderForInference == "gemini" || (normalizedProviderForInference.isEmpty && trimmedBaseURLForInference.isEmpty) {
+                requestKind = .gemini
+            } else {
+                requestKind = .openAICompatible
+            }
+        } else if let parsedKind = RequestKind(rawValue: normalizedKind) {
+            requestKind = parsedKind
+        } else {
+            throw configurationError("AI request kind is missing or invalid. Check Python plugin output.")
+        }
+
+        let normalizedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let resolvedProvider = normalizedProvider.isEmpty
+            ? (requestKind == .gemini ? "gemini" : "openai_compatible")
+            : normalizedProvider
+
+        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedProxyURL = proxyURL.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch requestKind {
+        case .gemini:
+            let resolvedModel = trimmedModel.isEmpty ? "gemini-1.5-flash" : trimmedModel
+            let resolvedBaseURL = trimmedBaseURL.isEmpty
+                ? "https://generativelanguage.googleapis.com"
+                : trimmedBaseURL
+            guard !trimmedAPIKey.isEmpty else {
+                throw configurationError("Please set Gemini API Key in Settings.")
+            }
+            return AIRequest(
+                kind: .gemini,
+                provider: resolvedProvider,
+                baseURL: resolvedBaseURL,
+                apiKey: trimmedAPIKey,
+                model: resolvedModel,
+                proxyURL: trimmedProxyURL
+            )
+
+        case .openAICompatible:
+            let resolvedBaseURL = trimmedBaseURL.isEmpty
+                ? defaultOpenAIBaseURL(for: resolvedProvider)
+                : trimmedBaseURL
+            guard !resolvedBaseURL.isEmpty else {
+                throw configurationError("Please set AI Base URL in Settings.")
+            }
+            guard !trimmedAPIKey.isEmpty else {
+                throw configurationError("Please set AI API Key in Settings.")
+            }
+            guard !trimmedModel.isEmpty else {
+                throw configurationError("Please set AI Model in Settings.")
+            }
+            return AIRequest(
+                kind: .openAICompatible,
+                provider: resolvedProvider,
+                baseURL: resolvedBaseURL,
+                apiKey: trimmedAPIKey,
+                model: trimmedModel,
+                proxyURL: trimmedProxyURL
+            )
+        }
+    }
+
     static func streamResponse(
         prompt: String,
-        geminiApiKey: String,
-        geminiModel: String,
-        proxyURL: String,
-        aiProvider: String,
-        aiBaseURL: String,
-        aiApiKey: String,
-        aiModel: String
+        request: AIRequest
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let resolved = try resolveProviderConfig(
-                        geminiApiKey: geminiApiKey,
-                        geminiModel: geminiModel,
-                        aiProvider: aiProvider,
-                        aiBaseURL: aiBaseURL,
-                        aiApiKey: aiApiKey,
-                        aiModel: aiModel
-                    )
-
-                    switch resolved.kind {
+                    switch request.kind {
                     case .gemini:
-                        try await streamGemini(prompt: prompt, config: resolved, proxyURL: proxyURL, continuation: continuation)
+                        try await streamGemini(prompt: prompt, request: request, continuation: continuation)
                     case .openAICompatible:
-                        try await streamOpenAICompatible(prompt: prompt, config: resolved, proxyURL: proxyURL, continuation: continuation)
+                        try await streamOpenAICompatible(prompt: prompt, request: request, continuation: continuation)
                     }
                 } catch {
                     continuation.finish(throwing: error)
@@ -38,77 +113,6 @@ struct GeminiStreamingService {
 }
 
 private extension GeminiStreamingService {
-    enum AIProviderKind {
-        case gemini
-        case openAICompatible
-    }
-
-    struct ResolvedProviderConfig {
-        let kind: AIProviderKind
-        let provider: String
-        let baseURL: String
-        let apiKey: String
-        let model: String
-    }
-
-    static func resolveProviderConfig(
-        geminiApiKey: String,
-        geminiModel: String,
-        aiProvider: String,
-        aiBaseURL: String,
-        aiApiKey: String,
-        aiModel: String
-    ) throws -> ResolvedProviderConfig {
-        let normalizedProvider = aiProvider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let trimmedBaseURL = aiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let useGemini = normalizedProvider.isEmpty
-            ? trimmedBaseURL.isEmpty
-            : normalizedProvider == "gemini"
-
-        if useGemini {
-            let apiKey = geminiApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !apiKey.isEmpty else {
-                throw configurationError("Please set Gemini API Key in Settings.")
-            }
-
-            let model = geminiModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "gemini-1.5-flash"
-                : geminiModel.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            return ResolvedProviderConfig(
-                kind: .gemini,
-                provider: "gemini",
-                baseURL: "https://generativelanguage.googleapis.com",
-                apiKey: apiKey,
-                model: model
-            )
-        }
-
-        let provider = normalizedProvider.isEmpty ? "openai_compatible" : normalizedProvider
-        let baseURL = trimmedBaseURL.isEmpty ? defaultOpenAIBaseURL(for: provider) : trimmedBaseURL
-        let apiKey = aiApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = aiModel.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !baseURL.isEmpty else {
-            throw configurationError("Please set AI Base URL in Settings.")
-        }
-        guard !apiKey.isEmpty else {
-            throw configurationError("Please set AI API Key in Settings.")
-        }
-        guard !model.isEmpty else {
-            throw configurationError("Please set AI Model in Settings.")
-        }
-
-        return ResolvedProviderConfig(
-            kind: .openAICompatible,
-            provider: provider,
-            baseURL: baseURL,
-            apiKey: apiKey,
-            model: model
-        )
-    }
-
     static func defaultOpenAIBaseURL(for provider: String) -> String {
         switch provider {
         case "edge", "edgefn":
@@ -142,13 +146,12 @@ private extension GeminiStreamingService {
 
     static func streamGemini(
         prompt: String,
-        config: ResolvedProviderConfig,
-        proxyURL: String,
+        request: AIRequest,
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
-        let encodedModel = config.model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? config.model
-        let encodedKey = config.apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? config.apiKey
-        let urlString = "\(config.baseURL)/v1beta/models/\(encodedModel):streamGenerateContent?key=\(encodedKey)&alt=sse"
+        let encodedModel = request.model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? request.model
+        let encodedKey = request.apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? request.apiKey
+        let urlString = "\(request.baseURL)/v1beta/models/\(encodedModel):streamGenerateContent?key=\(encodedKey)&alt=sse"
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
         }
@@ -159,13 +162,13 @@ private extension GeminiStreamingService {
             ]
         ]
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var requestObject = URLRequest(url: url)
+        requestObject.httpMethod = "POST"
+        requestObject.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        requestObject.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let session = makeSession(proxyURL: proxyURL)
-        let (bytes, response) = try await session.bytes(for: request)
+        let session = makeSession(proxyURL: request.proxyURL)
+        let (bytes, response) = try await session.bytes(for: requestObject)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
@@ -175,7 +178,7 @@ private extension GeminiStreamingService {
             for try await line in bytes.lines {
                 bodyText += line + "\n"
             }
-            throw networkError(provider: config.provider, statusCode: http.statusCode, body: bodyText)
+            throw networkError(provider: request.provider, statusCode: http.statusCode, body: bodyText)
         }
 
         for try await line in bytes.lines {
@@ -202,30 +205,29 @@ private extension GeminiStreamingService {
 
     static func streamOpenAICompatible(
         prompt: String,
-        config: ResolvedProviderConfig,
-        proxyURL: String,
+        request: AIRequest,
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
-        guard let url = URL(string: config.baseURL) else {
+        guard let url = URL(string: request.baseURL) else {
             throw URLError(.badURL)
         }
 
         let body: [String: Any] = [
-            "model": config.model,
+            "model": request.model,
             "messages": [
                 ["role": "user", "content": prompt]
             ],
             "stream": true
         ]
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var requestObject = URLRequest(url: url)
+        requestObject.httpMethod = "POST"
+        requestObject.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        requestObject.addValue("Bearer \(request.apiKey)", forHTTPHeaderField: "Authorization")
+        requestObject.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let session = makeSession(proxyURL: proxyURL)
-        let (bytes, response) = try await session.bytes(for: request)
+        let session = makeSession(proxyURL: request.proxyURL)
+        let (bytes, response) = try await session.bytes(for: requestObject)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
@@ -235,7 +237,7 @@ private extension GeminiStreamingService {
             for try await line in bytes.lines {
                 bodyText += line + "\n"
             }
-            throw networkError(provider: config.provider, statusCode: http.statusCode, body: bodyText)
+            throw networkError(provider: request.provider, statusCode: http.statusCode, body: bodyText)
         }
 
         var didYieldChunk = false

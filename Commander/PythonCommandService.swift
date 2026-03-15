@@ -113,11 +113,26 @@ struct CommandEngineSettingSchemaItem: Decodable, Identifiable, Hashable {
     }
 }
 
+struct CommandEngineAIRequest {
+    let kind: String
+    let provider: String
+    let baseURL: String
+    let apiKey: String
+    let model: String
+    let proxyURL: String
+}
+
 struct CommandEngineResponse: Decodable {
     let output: String
     let isAIResponse: Bool
     let deferAI: Bool
     let aiPrompt: String
+    let aiRequestKind: String
+    let aiRequestProvider: String
+    let aiRequestBaseURL: String
+    let aiRequestAPIKey: String
+    let aiRequestModel: String
+    let aiRequestProxyURL: String
     let deferShell: Bool
     let shellCommand: String
     let shellRunInBackground: Bool
@@ -137,6 +152,12 @@ struct CommandEngineResponse: Decodable {
         case isAIResponse = "is_ai_response"
         case deferAI = "defer_ai"
         case aiPrompt = "ai_prompt"
+        case aiRequestKind = "ai_request_kind"
+        case aiRequestProvider = "ai_request_provider"
+        case aiRequestBaseURL = "ai_request_base_url"
+        case aiRequestAPIKey = "ai_request_api_key"
+        case aiRequestModel = "ai_request_model"
+        case aiRequestProxyURL = "ai_request_proxy_url"
         case deferShell = "defer_shell"
         case shellCommand = "shell_command"
         case shellRunInBackground = "shell_run_in_background"
@@ -158,6 +179,12 @@ struct CommandEngineResponse: Decodable {
         isAIResponse = try container.decodeIfPresent(Bool.self, forKey: .isAIResponse) ?? false
         deferAI = try container.decodeIfPresent(Bool.self, forKey: .deferAI) ?? false
         aiPrompt = try container.decodeIfPresent(String.self, forKey: .aiPrompt) ?? ""
+        aiRequestKind = try container.decodeIfPresent(String.self, forKey: .aiRequestKind) ?? ""
+        aiRequestProvider = try container.decodeIfPresent(String.self, forKey: .aiRequestProvider) ?? ""
+        aiRequestBaseURL = try container.decodeIfPresent(String.self, forKey: .aiRequestBaseURL) ?? ""
+        aiRequestAPIKey = try container.decodeIfPresent(String.self, forKey: .aiRequestAPIKey) ?? ""
+        aiRequestModel = try container.decodeIfPresent(String.self, forKey: .aiRequestModel) ?? ""
+        aiRequestProxyURL = try container.decodeIfPresent(String.self, forKey: .aiRequestProxyURL) ?? ""
         deferShell = try container.decodeIfPresent(Bool.self, forKey: .deferShell) ?? false
         shellCommand = try container.decodeIfPresent(String.self, forKey: .shellCommand) ?? ""
         shellRunInBackground = try container.decodeIfPresent(Bool.self, forKey: .shellRunInBackground) ?? false
@@ -179,6 +206,12 @@ struct CommandEngineResponse: Decodable {
             isAIResponse: false,
             deferAI: false,
             aiPrompt: "",
+            aiRequestKind: "",
+            aiRequestProvider: "",
+            aiRequestBaseURL: "",
+            aiRequestAPIKey: "",
+            aiRequestModel: "",
+            aiRequestProxyURL: "",
             deferShell: false,
             shellCommand: "",
             shellRunInBackground: false,
@@ -200,6 +233,12 @@ struct CommandEngineResponse: Decodable {
         isAIResponse: Bool,
         deferAI: Bool,
         aiPrompt: String,
+        aiRequestKind: String,
+        aiRequestProvider: String,
+        aiRequestBaseURL: String,
+        aiRequestAPIKey: String,
+        aiRequestModel: String,
+        aiRequestProxyURL: String,
         deferShell: Bool,
         shellCommand: String,
         shellRunInBackground: Bool,
@@ -218,6 +257,12 @@ struct CommandEngineResponse: Decodable {
         self.isAIResponse = isAIResponse
         self.deferAI = deferAI
         self.aiPrompt = aiPrompt
+        self.aiRequestKind = aiRequestKind
+        self.aiRequestProvider = aiRequestProvider
+        self.aiRequestBaseURL = aiRequestBaseURL
+        self.aiRequestAPIKey = aiRequestAPIKey
+        self.aiRequestModel = aiRequestModel
+        self.aiRequestProxyURL = aiRequestProxyURL
         self.deferShell = deferShell
         self.shellCommand = shellCommand
         self.shellRunInBackground = shellRunInBackground
@@ -231,6 +276,17 @@ struct CommandEngineResponse: Decodable {
         self.settingUpdates = settingUpdates
         self.settingSchema = settingSchema
         self.configPaths = configPaths
+    }
+
+    var aiRequest: CommandEngineAIRequest {
+        CommandEngineAIRequest(
+            kind: aiRequestKind,
+            provider: aiRequestProvider,
+            baseURL: aiRequestBaseURL,
+            apiKey: aiRequestAPIKey,
+            model: aiRequestModel,
+            proxyURL: aiRequestProxyURL
+        )
     }
 }
 
