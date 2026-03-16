@@ -83,7 +83,7 @@ set disabled_plugins music
 plugins reset
 ```
 
-插件示例见：`python/plugin_samples/README.md`
+插件示例见：`python/plugin_samples/PLUGIN_SAMPLES.md`
 
 ## 脚本与自动化
 
@@ -113,4 +113,3 @@ bash scripts/release_gate.sh --min-commits-since-tag 3
 git tag v0.3.0
 git push origin v0.3.0
 ```
-
