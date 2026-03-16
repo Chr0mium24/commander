@@ -332,12 +332,12 @@ class AppState {
                     }
                 }
 
+                let finalOutput = fullResponse.isEmpty ? "Done (No Output)" : fullResponse
                 await MainActor.run {
                     guard self.isCurrentExecution(executionID) else { return }
                     self.activeCommandTask = nil
                     self.isAIResponse = true
-                    let output = fullResponse.isEmpty ? "Done (No Output)" : fullResponse
-                    self.finalizeCommand(type: historyType, input: historyInput, output: output)
+                    self.finalizeCommand(type: historyType, input: historyInput, output: finalOutput)
                 }
             } catch is CancellationError {
                 await MainActor.run {
@@ -366,6 +366,7 @@ class AppState {
         }
     }
 
+    @MainActor
     private func startShellSession(
         command: String,
         runInBackground: Bool,
@@ -405,14 +406,18 @@ class AppState {
                 command: trimmed,
                 runInBackground: runInBackground,
                 onOutput: { [weak self] chunk in
-                    guard let self else { return }
-                    self.updateSession(sessionID) { session in
-                        session.outputData.append(chunk)
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.updateSession(sessionID) { session in
+                            session.outputData.append(chunk)
+                        }
                     }
                 },
                 onExit: { [weak self] status in
-                    guard let self else { return }
-                    self.finishTerminalSession(sessionID: sessionID, exitCode: status, transcriptOverride: nil)
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.finishTerminalSession(sessionID: sessionID, exitCode: status, transcriptOverride: nil)
+                    }
                 }
             )
             shellSessions[sessionID] = shell
@@ -462,6 +467,7 @@ class AppState {
         interruptedTerminalSessions.removeAll()
     }
 
+    @MainActor
     private func finishTerminalSession(sessionID: UUID, exitCode: Int32?, transcriptOverride: String?) {
         guard let session = sessionByID(sessionID) else { return }
 
@@ -502,15 +508,12 @@ class AppState {
 
         terminalStopFallbackTasks[sessionID] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            await MainActor.run {
-                guard let self else { return }
-                guard self.sessionByID(sessionID) != nil else { return }
-                self.finishTerminalSession(
-                    sessionID: sessionID,
-                    exitCode: nil,
-                    transcriptOverride: nil
-                )
-            }
+            guard let self else { return }
+            await self.finishTerminalSession(
+                sessionID: sessionID,
+                exitCode: nil,
+                transcriptOverride: nil
+            )
         }
     }
 
