@@ -4,6 +4,7 @@ import Splash
 import AppKit
 import SwiftTerm
 import Darwin
+import WebKit
 
 struct ContentView: View {
     private let compactWindowHeight: CGFloat = 40
@@ -323,18 +324,18 @@ struct ContentView: View {
                                     DisclosureGroup(isExpanded: $showOutputTools) {
                                         VStack(alignment: .leading, spacing: 8) {
                                             HStack(spacing: 8) {
-                                                Button("Copy Text") {
+                                                Button("Copy Markdown") {
+                                                    appState.copyToClipboard(appState.resultText)
+                                                }
+                                                .font(.caption)
+                                                .buttonStyle(.borderedProminent)
+
+                                                Button("Copy Plain Text") {
                                                     if let attributed = try? AttributedString(markdown: appState.resultText) {
                                                         appState.copyToClipboard(String(attributed.characters))
                                                     } else {
                                                         appState.copyToClipboard(appState.resultText)
                                                     }
-                                                }
-                                                .font(.caption)
-                                                .buttonStyle(.bordered)
-
-                                                Button("Copy Markdown") {
-                                                    appState.copyToClipboard(appState.resultText)
                                                 }
                                                 .font(.caption)
                                                 .buttonStyle(.bordered)
@@ -682,25 +683,145 @@ private enum MarkdownCodeBlockExtractor {
     }
 }
 
+private struct MarkdownRenderSegment: Identifiable {
+    enum Kind {
+        case markdown(String)
+        case math(String)
+    }
+
+    let id: Int
+    let kind: Kind
+}
+
+private enum MarkdownFormulaExtractor {
+    static func extract(from markdown: String) -> [MarkdownRenderSegment] {
+        guard markdown.contains("$$") else {
+            return [MarkdownRenderSegment(id: 0, kind: .markdown(markdown))]
+        }
+
+        let lines = markdown.components(separatedBy: .newlines)
+        var segments: [MarkdownRenderSegment] = []
+        var markdownLines: [String] = []
+        var formulaLines: [String] = []
+        var inCodeFence = false
+        var inFormula = false
+        var nextID = 0
+
+        func appendMarkdownIfNeeded() {
+            guard !markdownLines.isEmpty else { return }
+            let text = markdownLines.joined(separator: "\n")
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                segments.append(MarkdownRenderSegment(id: nextID, kind: .markdown(text)))
+                nextID += 1
+            }
+            markdownLines.removeAll(keepingCapacity: true)
+        }
+
+        func appendFormulaIfNeeded() {
+            let text = formulaLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                segments.append(MarkdownRenderSegment(id: nextID, kind: .math(text)))
+                nextID += 1
+            }
+            formulaLines.removeAll(keepingCapacity: true)
+        }
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if !inFormula, trimmed.hasPrefix("```") {
+                inCodeFence.toggle()
+                markdownLines.append(line)
+                continue
+            }
+
+            if !inCodeFence {
+                if !inFormula,
+                   trimmed.hasPrefix("$$"),
+                   trimmed.hasSuffix("$$"),
+                   trimmed.count > 4 {
+                    appendMarkdownIfNeeded()
+                    let formula = String(trimmed.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !formula.isEmpty {
+                        segments.append(MarkdownRenderSegment(id: nextID, kind: .math(formula)))
+                        nextID += 1
+                    }
+                    continue
+                }
+
+                if trimmed == "$$" {
+                    if inFormula {
+                        appendFormulaIfNeeded()
+                    } else {
+                        appendMarkdownIfNeeded()
+                    }
+                    inFormula.toggle()
+                    continue
+                }
+            }
+
+            if inFormula {
+                formulaLines.append(line)
+            } else {
+                markdownLines.append(line)
+            }
+        }
+
+        if inFormula {
+            markdownLines.append("$$")
+            markdownLines.append(contentsOf: formulaLines)
+        }
+        appendMarkdownIfNeeded()
+
+        if segments.isEmpty {
+            return [MarkdownRenderSegment(id: 0, kind: .markdown(markdown))]
+        }
+        return segments
+    }
+}
+
 private struct MarkdownResultView: View {
     let resultText: String
     let colorScheme: ColorScheme
     let onCopyCode: (String) -> Void
     let onRunCode: (String, String) -> Void
 
+    private var renderSegments: [MarkdownRenderSegment] {
+        MarkdownFormulaExtractor.extract(from: resultText)
+    }
+
     var body: some View {
-        Markdown(resultText)
-            .markdownBlockStyle(\.codeBlock) { configuration in
-                codeBlock(configuration)
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(renderSegments) { segment in
+                segmentView(segment)
             }
-            .markdownTheme(.adaptiveTheme(colorScheme: colorScheme))
-            .markdownCodeSyntaxHighlighter(
-                colorScheme == .dark
-                    ? SplashCodeSyntaxHighlighter.wwdc17
-                    : SplashCodeSyntaxHighlighter.basicLight
-            )
-            .textSelection(.enabled)
-            .id(resultText)
+        }
+    }
+
+    @ViewBuilder
+    private func segmentView(_ segment: MarkdownRenderSegment) -> some View {
+        switch segment.kind {
+        case .markdown(let markdown):
+            Markdown(markdown)
+                .markdownBlockStyle(\.codeBlock) { configuration in
+                    codeBlock(configuration)
+                }
+                .markdownBlockStyle(\.paragraph) { configuration in
+                    paragraphBlock(configuration)
+                }
+                .markdownTheme(.adaptiveTheme(colorScheme: colorScheme))
+                .markdownCodeSyntaxHighlighter(
+                    colorScheme == .dark
+                        ? SplashCodeSyntaxHighlighter.wwdc17
+                        : SplashCodeSyntaxHighlighter.basicLight
+                )
+                .textSelection(.enabled)
+                .id(markdown)
+
+        case .math(let latex):
+            MathFormulaView(latex: latex, colorScheme: colorScheme)
+                .padding(.vertical, 2)
+        }
     }
 
     @ViewBuilder
@@ -761,6 +882,20 @@ private struct MarkdownResultView: View {
         .markdownMargin(top: .zero, bottom: .em(0.9))
     }
 
+    @ViewBuilder
+    private func paragraphBlock(_ configuration: BlockConfiguration) -> some View {
+        let markdown = configuration.content.renderMarkdown().trimmingCharacters(in: .whitespacesAndNewlines)
+        if containsInlineFormula(in: markdown) {
+            InlineMathParagraphView(markdown: markdown, colorScheme: colorScheme)
+                .markdownMargin(top: .zero, bottom: .em(1))
+        } else {
+            configuration.label
+                .fixedSize(horizontal: false, vertical: true)
+                .relativeLineSpacing(.em(0.15))
+                .markdownMargin(top: .zero, bottom: .em(1))
+        }
+    }
+
     private func normalizedLanguage(from fenceInfo: String?) -> String {
         guard let raw = fenceInfo?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return ""
@@ -771,6 +906,289 @@ private struct MarkdownResultView: View {
 
     private func isRunnableCodeLanguage(_ language: String) -> Bool {
         ["python", "py", "bash", "sh", "zsh", "shell"].contains(language)
+    }
+
+    private func containsInlineFormula(in markdown: String) -> Bool {
+        guard markdown.contains("$") else { return false }
+        guard let regex = try? NSRegularExpression(pattern: #"(?<!\\)\$(?!\$)(.+?)(?<!\\)\$(?!\$)"#, options: []) else {
+            return false
+        }
+        let range = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
+        return regex.firstMatch(in: markdown, options: [], range: range) != nil
+    }
+}
+
+private struct MathFormulaView: View {
+    let latex: String
+    let colorScheme: ColorScheme
+
+    @State private var contentHeight: CGFloat = 56
+
+    private var formulaTextHex: String {
+        colorScheme == .dark ? "#E6E2EA" : "#202124"
+    }
+
+    var body: some View {
+        MathFormulaWebView(
+            latex: latex,
+            textHex: formulaTextHex,
+            contentHeight: $contentHeight
+        )
+        .frame(height: min(max(contentHeight, 44), 260))
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+private struct InlineMathParagraphView: View {
+    let markdown: String
+    let colorScheme: ColorScheme
+    @State private var contentHeight: CGFloat = 28
+
+    private var textHex: String {
+        colorScheme == .dark ? "#E6E2EA" : "#202124"
+    }
+
+    var body: some View {
+        InlineMathWebView(
+            markdown: markdown,
+            textHex: textHex,
+            contentHeight: $contentHeight
+        )
+        .frame(height: min(max(contentHeight, 22), 260))
+    }
+}
+
+private final class PassthroughWKWebView: WKWebView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
+private struct MathFormulaWebView: NSViewRepresentable {
+    let latex: String
+    let textHex: String
+    @Binding var contentHeight: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(contentHeight: $contentHeight)
+    }
+
+    func makeNSView(context: Context) -> PassthroughWKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        let view = PassthroughWKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = context.coordinator
+        view.setValue(false, forKey: "drawsBackground")
+        view.allowsBackForwardNavigationGestures = false
+        return view
+    }
+
+    func updateNSView(_ nsView: PassthroughWKWebView, context: Context) {
+        guard context.coordinator.lastLatex != latex || context.coordinator.lastTextHex != textHex else { return }
+        context.coordinator.lastLatex = latex
+        context.coordinator.lastTextHex = textHex
+        nsView.loadHTMLString(Self.html(for: latex, textHex: textHex), baseURL: URL(string: "https://cdn.jsdelivr.net"))
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var lastLatex: String = ""
+        var lastTextHex: String = ""
+        @Binding var contentHeight: CGFloat
+
+        init(contentHeight: Binding<CGFloat>) {
+            _contentHeight = contentHeight
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            updateHeight(for: webView)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self, weak webView] in
+                guard let self, let webView else { return }
+                self.updateHeight(for: webView)
+            }
+        }
+
+        private func updateHeight(for webView: WKWebView) {
+            let script = "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.getElementById('math')?.scrollHeight || 0)"
+            webView.evaluateJavaScript(script) { [weak self] result, _ in
+                guard let self else { return }
+                guard let number = result as? NSNumber else { return }
+                let newHeight = CGFloat(truncating: number) + 2
+                guard newHeight.isFinite, newHeight > 0 else { return }
+                DispatchQueue.main.async {
+                    if abs(self.contentHeight - newHeight) > 0.5 {
+                        self.contentHeight = newHeight
+                    }
+                }
+            }
+        }
+    }
+
+    private static func html(for latex: String, textHex: String) -> String {
+        let escaped = htmlEscape("$$\(latex)$$")
+        return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+          <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+          <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+          <style>
+            html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+            body { font-size: 1.05rem; color: \(textHex); -webkit-user-select: none; cursor: default; }
+            #math { padding: 8px 10px 10px 10px; }
+            #math .katex, #math .katex-display { color: \(textHex) !important; }
+            #math .katex-display { margin: 0.15em 0; }
+          </style>
+        </head>
+        <body>
+          <div id="math">\(escaped)</div>
+          <script>
+            document.addEventListener("DOMContentLoaded", function () {
+              if (window.renderMathInElement) {
+                renderMathInElement(document.body, {
+                  delimiters: [{ left: "$$", right: "$$", display: true }],
+                  throwOnError: false
+                });
+              }
+            });
+          </script>
+        </body>
+        </html>
+        """
+    }
+
+    private static func htmlEscape(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+}
+
+private struct InlineMathWebView: NSViewRepresentable {
+    let markdown: String
+    let textHex: String
+    @Binding var contentHeight: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(contentHeight: $contentHeight)
+    }
+
+    func makeNSView(context: Context) -> PassthroughWKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        let view = PassthroughWKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = context.coordinator
+        view.setValue(false, forKey: "drawsBackground")
+        return view
+    }
+
+    func updateNSView(_ nsView: PassthroughWKWebView, context: Context) {
+        guard context.coordinator.lastMarkdown != markdown || context.coordinator.lastTextHex != textHex else { return }
+        context.coordinator.lastMarkdown = markdown
+        context.coordinator.lastTextHex = textHex
+        nsView.loadHTMLString(Self.html(for: markdown, textHex: textHex), baseURL: URL(string: "https://cdn.jsdelivr.net"))
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var lastMarkdown: String = ""
+        var lastTextHex: String = ""
+        @Binding var contentHeight: CGFloat
+
+        init(contentHeight: Binding<CGFloat>) {
+            _contentHeight = contentHeight
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            updateHeight(for: webView)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self, weak webView] in
+                guard let self, let webView else { return }
+                self.updateHeight(for: webView)
+            }
+        }
+
+        private func updateHeight(for webView: WKWebView) {
+            let script = "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.getElementById('content')?.scrollHeight || 0)"
+            webView.evaluateJavaScript(script) { [weak self] result, _ in
+                guard let self else { return }
+                guard let number = result as? NSNumber else { return }
+                let newHeight = CGFloat(truncating: number) + 2
+                guard newHeight.isFinite, newHeight > 0 else { return }
+                DispatchQueue.main.async {
+                    if abs(self.contentHeight - newHeight) > 0.5 {
+                        self.contentHeight = newHeight
+                    }
+                }
+            }
+        }
+    }
+
+    private static func html(for markdown: String, textHex: String) -> String {
+        let escaped = htmlEscape(markdown)
+        return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+          <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+          <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+          <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+          <style>
+            html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+            body { font-size: 0.98rem; color: \(textHex); -webkit-user-select: none; cursor: default; }
+            #content { padding: 0; margin: 0; }
+            #content p { margin: 0 0 0.9em 0; }
+            #content p:last-child { margin-bottom: 0; }
+            #content .katex, #content .katex-display { color: \(textHex) !important; }
+          </style>
+        </head>
+        <body>
+          <script id="source" type="text/plain">\(escaped)</script>
+          <div id="content"></div>
+          <script>
+            document.addEventListener("DOMContentLoaded", function () {
+              const source = document.getElementById("source");
+              const content = document.getElementById("content");
+              const raw = source ? source.textContent : "";
+              if (window.marked) {
+                content.innerHTML = marked.parse(raw || "", { breaks: true, gfm: true });
+              } else {
+                content.textContent = raw || "";
+              }
+              if (window.renderMathInElement) {
+                renderMathInElement(content, {
+                  delimiters: [
+                    { left: "$$", right: "$$", display: true },
+                    { left: "$", right: "$", display: false }
+                  ],
+                  throwOnError: false
+                });
+              }
+            });
+          </script>
+        </body>
+        </html>
+        """
+    }
+
+    private static func htmlEscape(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 }
 

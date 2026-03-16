@@ -7,7 +7,6 @@ SCHEME="commander"
 CONFIGURATION="Debug"
 DESTINATION="platform=macOS"
 DERIVED_DATA_PATH="/tmp/CommanderDerived"
-APP_PATH="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/Commander.app"
 
 DO_CLEAN=0
 DO_OPEN=1
@@ -15,9 +14,11 @@ DO_KILL=1
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build_run.sh [options]
+Usage: ./build_run.sh [options]
 
 Options:
+  --release    Build with Release configuration
+  --debug      Build with Debug configuration (default)
   --clean      Clean before building
   --no-open    Build only, do not launch app
   --kill       Kill existing Commander process before launch (default on)
@@ -28,6 +29,14 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --release)
+      CONFIGURATION="Release"
+      shift
+      ;;
+    --debug)
+      CONFIGURATION="Debug"
+      shift
+      ;;
     --clean)
       DO_CLEAN=1
       shift
@@ -60,6 +69,8 @@ if [[ ! -d "${PROJECT_PATH}" ]]; then
   echo "Project not found: ${PROJECT_PATH}" >&2
   exit 1
 fi
+
+APP_PATH="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/Commander.app"
 
 LOCAL_VENV_PATH="${ROOT_DIR}/Commander/.venv"
 if [[ -d "${LOCAL_VENV_PATH}" ]]; then
