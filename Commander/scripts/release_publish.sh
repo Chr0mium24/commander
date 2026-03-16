@@ -127,8 +127,8 @@ if [[ -z "${TAG_MESSAGE}" ]]; then
   TAG_MESSAGE="Release ${TAG}"
 fi
 
-if [[ ! -x "${GATE_SCRIPT}" ]]; then
-  echo "Gate script missing or not executable: ${GATE_SCRIPT}" >&2
+if [[ ! -f "${GATE_SCRIPT}" ]]; then
+  echo "Gate script missing: ${GATE_SCRIPT}" >&2
   exit 1
 fi
 
@@ -173,4 +173,3 @@ run git push "${REMOTE}" "${TAG}"
 
 echo "==> Done"
 echo "GitHub Actions release workflow should start for tag ${TAG}."
-
