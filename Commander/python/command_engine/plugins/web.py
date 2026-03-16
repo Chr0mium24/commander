@@ -11,6 +11,13 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
     if context is not None:
         alias_ser = context.aliases.get("ser", "ser").strip() or "ser"
 
+    registry.register_help_section(
+        "Web Commands",
+        [
+            f"`{alias_ser} <search terms>` open Google search in browser",
+        ],
+    )
+
     registry.register_command(
         alias_ser,
         handle_search,

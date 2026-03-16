@@ -32,6 +32,17 @@ def _music_script_module() -> ModuleType:
 
 
 def register(registry: CommandRegistry, context: EngineContext | None = None) -> None:
+    registry.register_help_section(
+        "Music Plugin",
+        [
+            "`music` random playlist",
+            "`music ls` list local songs",
+            "`music add <url|BV> [more ...]` download via yt-dlp",
+            "`music single [id]` play one song",
+            "`music loop <id>` loop song",
+            "`p ...` alias for music",
+        ],
+    )
     module = _music_script_module()
     register_fn = getattr(module, "register", None)
     if not callable(register_fn):

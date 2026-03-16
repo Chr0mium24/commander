@@ -12,6 +12,17 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
         alias_def = context.aliases.get("def", "def").strip() or "def"
         alias_ask = context.aliases.get("ask", "ask").strip() or "ask"
 
+    registry.register_help_section(
+        "AI Commands",
+        [
+            "`ai` or `ai status` show active provider/model config",
+            "`ai <prompt>` force AI mode",
+            f"`{alias_def} <word>` force dictionary mode",
+            f"`{alias_ask} <question>` force AI mode alias",
+            "Fallback routing: single English word -> dictionary; otherwise -> AI",
+        ],
+    )
+
     registry.register_command(
         "ai",
         handle_ai,

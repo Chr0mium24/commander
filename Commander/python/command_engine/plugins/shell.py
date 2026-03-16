@@ -11,6 +11,16 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
     if context is not None:
         alias_py = context.aliases.get("py", "py").strip() or "py"
 
+    registry.register_help_section(
+        "Shell Commands",
+        [
+            "`run <command>` run shell command and capture output",
+            "`run <command> &` open interactive process panel",
+            "`terminal [command]` always use process panel (empty opens blank shell)",
+            f"`{alias_py} <python code>` run inline python snippet",
+        ],
+    )
+
     registry.register_command(
         alias_py,
         handle_py,

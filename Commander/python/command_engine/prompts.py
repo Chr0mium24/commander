@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from .constants import SETTING_SCHEMA
-from .plugin_registry import CommandHelpEntry
+from .plugin_registry import PluginHelpSection
 from .utils import camel_to_snake
 
 
@@ -30,8 +30,10 @@ def is_single_word(text: str) -> bool:
 
 def help_text(
     aliases: dict[str, str],
-    commands: list[CommandHelpEntry],
     setting_schema: list[dict[str, str]] | None = None,
+    plugin_sections: list[PluginHelpSection] | None = None,
+    active_plugins: list[str] | None = None,
+    skipped_plugins: list[str] | None = None,
 ) -> str:
     source_schema = setting_schema if setting_schema is not None else SETTING_SCHEMA
     key_list = sorted(
@@ -43,46 +45,45 @@ def help_text(
     )
     keys_line = ", ".join(f"`{key}`" for key in key_list)
 
-    command_rows: list[str] = []
-    for item in commands:
-        if item.command in {"help", "hist", "quit", "scripts", "set"}:
-            continue
-        usage = item.usage or item.command
-        suffix = f" ({item.description})" if item.description else ""
-        alias_part = f" aliases: {', '.join(f'`{alias}`' for alias in item.aliases)}" if item.aliases else ""
-        command_rows.append(f"- `{usage}`{suffix}{alias_part}")
+    loaded = active_plugins or []
+    skipped = skipped_plugins or []
+    sections = plugin_sections or []
 
-    dynamic_block = "\n".join(command_rows) if command_rows else "- None"
+    lines: list[str] = [
+        "### Commander Python Engine",
+        "",
+        "Aliases:",
+        f"- Python: `{aliases['py']}`",
+        f"- Dictionary: `{aliases['def']}`",
+        f"- Ask: `{aliases['ask']}`",
+        f"- Search: `{aliases['ser']}`",
+        "",
+        "Settable keys:",
+        keys_line or "(none)",
+    ]
 
-    return f"""### Commander Python Engine
+    if loaded:
+        lines.extend(["", "Active plugins:"])
+        lines.extend(f"- `{name}`" for name in loaded)
 
-Default behavior:
-- Single English word: dictionary mode
-- Multi-word query: AI mode
+    if skipped:
+        lines.extend(["", "Skipped plugins:"])
+        lines.extend(f"- `{name}`" for name in skipped)
 
-Commands:
-- `help` show this help
-- `hist` open history
-- `scripts` list scripts from script directory
-- `set` open settings window
-- `set get <key>` read one setting
-- `set <key> <value>` update one setting
-- `set list` print full schema
-- `set file` print config/plugin paths
-- `set schema_json` return machine-readable schema payload
-- `run <command>` run and capture output directly
-- `run <command> &` run inside process panel (interactive/stop-able)
-- `terminal [command]` open process panel terminal (no command = blank shell)
-- `{aliases['py']} <code>` run python snippet
-- `{aliases['def']} <word>` force dictionary mode
-- `{aliases['ask']} <question>` force AI mode
-- `{aliases['ser']} <term>` open Google search
-- `plugins` show plugin load status
-- `quit` exit app
+    if sections:
+        grouped: dict[str, list[PluginHelpSection]] = {}
+        for section in sections:
+            grouped.setdefault(section.plugin, []).append(section)
 
-Settable keys:
-{keys_line}
+        lines.append("")
+        lines.append("Plugin docs:")
+        for plugin_name in sorted(grouped.keys()):
+            lines.append("")
+            lines.append(f"#### {plugin_name}")
+            for section in grouped[plugin_name]:
+                lines.append(f"- **{section.title}**")
+                lines.extend(f"  - {line}" for line in section.lines)
+    else:
+        lines.extend(["", "Plugin docs:", "- None"])
 
-Plugin commands:
-{dynamic_block}
-"""
+    return "\n".join(lines)

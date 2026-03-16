@@ -30,6 +30,12 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
         coalesce(effective_settings, "pluginDirectory", str(PLUGIN_DIR_PATH))
         or str(PLUGIN_DIR_PATH)
     )
+    enabled_plugins = parse_plugin_filter(
+        str(coalesce(effective_settings, "enabledPlugins", "") or "")
+    )
+    disabled_plugins = parse_plugin_filter(
+        str(coalesce(effective_settings, "disabledPlugins", "") or "")
+    )
 
     context = EngineContext(
         query=query,
@@ -43,15 +49,42 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
     registry = CommandRegistry()
     context.registry = registry
 
-    load_builtin_plugins(registry, context)
-    load_external_plugins(registry, context, plugin_dir=plugin_dir)
+    builtin_report = load_builtin_plugins(
+        registry,
+        context,
+        enabled_plugins=enabled_plugins,
+        disabled_plugins=disabled_plugins,
+    )
+    external_report = load_external_plugins(
+        registry,
+        context,
+        plugin_dir=plugin_dir,
+        enabled_plugins=enabled_plugins,
+        disabled_plugins=disabled_plugins,
+    )
 
-    context.runtime_metadata["loaded_plugins"] = registry.loaded_plugins
+    context.runtime_metadata["loaded_plugins"] = (
+        builtin_report["loaded"] + external_report["loaded"]
+    )
     context.runtime_metadata["plugin_errors"] = registry.plugin_errors
     context.runtime_metadata["plugin_directory"] = plugin_dir
+    context.runtime_metadata["enabled_plugins"] = sorted(enabled_plugins)
+    context.runtime_metadata["disabled_plugins"] = sorted(disabled_plugins)
+    context.runtime_metadata["available_plugins"] = (
+        builtin_report["available"] + external_report["available"]
+    )
+    context.runtime_metadata["skipped_plugins"] = (
+        builtin_report["skipped"] + external_report["skipped"]
+    )
 
     handled = registry.dispatch(context, trimmed)
     if not handled and not response["output"]:
         response["output"] = "Unknown command. Type `help`."
 
     return response
+
+
+def parse_plugin_filter(raw: str) -> set[str]:
+    cleaned = raw.replace("\n", ",").replace("\t", ",")
+    tokens = [token.strip().lower() for token in cleaned.replace(" ", ",").split(",")]
+    return {token for token in tokens if token}

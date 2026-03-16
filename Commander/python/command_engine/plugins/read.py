@@ -9,6 +9,16 @@ from ..runtime import EngineContext
 def register(registry: CommandRegistry, context: EngineContext | None = None) -> None:
     registry.register_setting("jinaReaderApiKey", "secret", "Jina Reader API Key", "plugins")
     registry.register_setting("jinaReaderBaseURL", "string", "Jina Reader Base URL", "plugins")
+    registry.register_help_section(
+        "Read Plugin",
+        [
+            "`read <url>` fetch markdown via Jina Reader",
+            "`md <url>` alias for read",
+            "`jina <url>` alias for read",
+            "`set jina_reader_api_key <token>` configure token",
+            "`set jina_reader_base_url <url>` override endpoint prefix",
+        ],
+    )
     registry.register_command(
         "read",
         handle_md_reader,

@@ -13,6 +13,15 @@ from .runtime import EngineContext
 CommandHandler = Callable[[EngineContext, str], None]
 FallbackHandler = Callable[[EngineContext, str], bool]
 
+BUILTIN_PLUGIN_MODULES: tuple[str, ...] = (
+    "command_engine.plugins.core",
+    "command_engine.plugins.shell",
+    "command_engine.plugins.music",
+    "command_engine.plugins.web",
+    "command_engine.plugins.ai",
+    "command_engine.plugins.read",
+)
+
 
 @dataclass
 class CommandHelpEntry:
@@ -21,6 +30,13 @@ class CommandHelpEntry:
     usage: str
     description: str
     plugin: str
+
+
+@dataclass
+class PluginHelpSection:
+    plugin: str
+    title: str
+    lines: list[str]
 
 
 @dataclass
@@ -41,6 +57,7 @@ class CommandRegistry:
         self._loaded_plugins: list[str] = []
         self._plugin_errors: list[str] = []
         self._setting_schema = [dict(item) for item in SETTING_SCHEMA]
+        self._help_sections: list[PluginHelpSection] = []
 
     @property
     def loaded_plugins(self) -> list[str]:
@@ -52,6 +69,16 @@ class CommandRegistry:
 
     def setting_schema(self) -> list[dict[str, str]]:
         return [dict(item) for item in self._setting_schema]
+
+    def help_sections(self) -> list[PluginHelpSection]:
+        return [
+            PluginHelpSection(
+                plugin=section.plugin,
+                title=section.title,
+                lines=list(section.lines),
+            )
+            for section in self._help_sections
+        ]
 
     def activate_plugin(self, name: str) -> None:
         plugin_name = name.strip() or "builtin"
@@ -76,6 +103,19 @@ class CommandRegistry:
             return
         self._setting_schema.append(
             {"key": normalized, "type": value_type, "label": label, "group": group}
+        )
+
+    def register_help_section(self, title: str, lines: list[str]) -> None:
+        cleaned_title = title.strip()
+        cleaned_lines = [line.rstrip() for line in lines if line.strip()]
+        if not cleaned_title or not cleaned_lines:
+            return
+        self._help_sections.append(
+            PluginHelpSection(
+                plugin=self._active_plugin,
+                title=cleaned_title,
+                lines=cleaned_lines,
+            )
         )
 
     def register_command(
@@ -168,49 +208,84 @@ class CommandRegistry:
         return grouped
 
 
-def load_builtin_plugins(registry: CommandRegistry, context: EngineContext) -> None:
-    modules = (
-        "command_engine.plugins.core",
-        "command_engine.plugins.shell",
-        "command_engine.plugins.music",
-        "command_engine.plugins.web",
-        "command_engine.plugins.ai",
-        "command_engine.plugins.read",
-    )
+def load_builtin_plugins(
+    registry: CommandRegistry,
+    context: EngineContext,
+    *,
+    enabled_plugins: set[str] | None = None,
+    disabled_plugins: set[str] | None = None,
+) -> dict[str, list[str]]:
+    report = {"available": [], "loaded": [], "skipped": []}
+    normalized_enabled = _normalize_plugin_filter(enabled_plugins)
+    normalized_disabled = _normalize_plugin_filter(disabled_plugins)
 
-    for module_name in modules:
+    for module_name in BUILTIN_PLUGIN_MODULES:
         short_name = module_name.rsplit(".", maxsplit=1)[-1]
-        registry.activate_plugin(f"builtin:{short_name}")
+        plugin_id = f"builtin:{short_name}"
+        report["available"].append(plugin_id)
+        if not _is_plugin_enabled(
+            kind="builtin",
+            name=short_name,
+            enabled=normalized_enabled,
+            disabled=normalized_disabled,
+        ):
+            report["skipped"].append(plugin_id)
+            continue
+
+        registry.activate_plugin(plugin_id)
+        error_count = len(registry.plugin_errors)
         try:
             module = importlib.import_module(module_name)
         except Exception as exc:  # noqa: BLE001
             registry.add_plugin_error(f"Failed loading `{module_name}`: {exc}")
             continue
         _invoke_register(module, registry, context, source=module_name)
+        if len(registry.plugin_errors) == error_count:
+            report["loaded"].append(plugin_id)
+
+    return report
 
 
 def load_external_plugins(
     registry: CommandRegistry,
     context: EngineContext,
     plugin_dir: str,
-) -> None:
+    *,
+    enabled_plugins: set[str] | None = None,
+    disabled_plugins: set[str] | None = None,
+) -> dict[str, list[str]]:
+    report = {"available": [], "loaded": [], "skipped": []}
+    normalized_enabled = _normalize_plugin_filter(enabled_plugins)
+    normalized_disabled = _normalize_plugin_filter(disabled_plugins)
+
     if plugin_dir.strip():
         path = Path(plugin_dir).expanduser()
     else:
         path = PLUGIN_DIR_PATH
 
     if not path.exists():
-        return
+        return report
 
     if not path.is_dir():
         registry.add_plugin_error(f"Plugin path is not a directory: {path}")
-        return
+        return report
 
     for file_path in sorted(path.glob("*.py"), key=lambda p: p.name.lower()):
         if file_path.name.startswith("_"):
             continue
 
         plugin_name = file_path.stem
+        plugin_id = f"external:{plugin_name}"
+        report["available"].append(plugin_id)
+        if not _is_plugin_enabled(
+            kind="external",
+            name=plugin_name,
+            enabled=normalized_enabled,
+            disabled=normalized_disabled,
+        ):
+            report["skipped"].append(plugin_id)
+            continue
+
         module_name = f"commander_external_plugin_{plugin_name}"
         spec = importlib.util.spec_from_file_location(module_name, str(file_path))
         if spec is None or spec.loader is None:
@@ -218,7 +293,8 @@ def load_external_plugins(
             continue
 
         module = importlib.util.module_from_spec(spec)
-        registry.activate_plugin(f"external:{plugin_name}")
+        registry.activate_plugin(plugin_id)
+        error_count = len(registry.plugin_errors)
         try:
             spec.loader.exec_module(module)
         except Exception as exc:  # noqa: BLE001
@@ -226,6 +302,10 @@ def load_external_plugins(
             continue
 
         _invoke_register(module, registry, context, source=str(file_path))
+        if len(registry.plugin_errors) == error_count:
+            report["loaded"].append(plugin_id)
+
+    return report
 
 
 def _invoke_register(module: object, registry: CommandRegistry, context: EngineContext, source: str) -> None:
@@ -250,3 +330,32 @@ def _invoke_register(module: object, registry: CommandRegistry, context: EngineC
             register_fn(registry)
     except Exception as exc:  # noqa: BLE001
         registry.add_plugin_error(f"Plugin `{source}` register() failed: {exc}")
+
+
+def _normalize_plugin_filter(items: set[str] | None) -> set[str]:
+    if not items:
+        return set()
+    return {item.strip().lower() for item in items if item.strip()}
+
+
+def _is_plugin_enabled(
+    *,
+    kind: str,
+    name: str,
+    enabled: set[str],
+    disabled: set[str],
+) -> bool:
+    normalized_name = name.strip().lower()
+    plugin_id = f"{kind}:{normalized_name}"
+    aliases = {normalized_name, plugin_id}
+
+    if kind == "builtin" and normalized_name == "core":
+        return True
+
+    if aliases & disabled:
+        return False
+
+    if not enabled or "*" in enabled:
+        return True
+
+    return not aliases.isdisjoint(enabled)

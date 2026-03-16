@@ -21,6 +21,8 @@ SETTING_KEY_MAP = {
     "ai_api_key": ("aiApiKey", "string"),
     "ai_model": ("aiModel", "string"),
     "plugin_dir": ("pluginDirectory", "string"),
+    "enabled_plugins": ("enabledPlugins", "string"),
+    "disabled_plugins": ("disabledPlugins", "string"),
 }
 
 for _friendly, _tuple in list(SETTING_KEY_MAP.items()):
@@ -35,6 +37,8 @@ SETTING_SCHEMA = [
     {"key": "pythonPath", "type": "string", "label": "Python Path", "group": "runtime"},
     {"key": "scriptDirectory", "type": "string", "label": "Script Directory", "group": "runtime"},
     {"key": "pluginDirectory", "type": "string", "label": "Plugin Directory", "group": "runtime"},
+    {"key": "enabledPlugins", "type": "string", "label": "Enabled Plugins", "group": "plugins"},
+    {"key": "disabledPlugins", "type": "string", "label": "Disabled Plugins", "group": "plugins"},
     {"key": "geminiApiKey", "type": "secret", "label": "Gemini API Key", "group": "ai"},
     {"key": "geminiModel", "type": "string", "label": "Gemini Model", "group": "ai"},
     {"key": "geminiProxy", "type": "string", "label": "Gemini Proxy", "group": "ai"},
@@ -54,6 +58,8 @@ DEFAULT_SETTINGS = {
     "pythonPath": DEFAULT_PYTHON,
     "scriptDirectory": "",
     "pluginDirectory": "",
+    "enabledPlugins": "",
+    "disabledPlugins": "",
     "geminiApiKey": "",
     "geminiModel": "gemini-1.5-flash",
     "geminiProxy": "",
