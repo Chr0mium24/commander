@@ -93,6 +93,7 @@ plugins reset
 关键脚本：
 - `build_run.sh`：本地构建/启动
 - `scripts/release_gate.sh`：发版门禁检查
+- `scripts/release_publish.sh`：一键推分支 + 打 tag + 触发 GitHub Release
 - `scripts/build_after_push.sh`：仅在已 push 后编译当前提交
 
 ## CI / Release
@@ -110,6 +111,5 @@ bash scripts/release_gate.sh --min-commits-since-tag 3
 打 tag 触发发布：
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+./scripts/release_publish.sh --tag v0.3.0
 ```

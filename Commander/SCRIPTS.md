@@ -71,7 +71,46 @@ bash scripts/release_gate.sh
 bash scripts/release_gate.sh --min-commits-since-tag 3
 ```
 
-## 3) Push 后一键编译当前提交
+说明：
+- 这个脚本不会创建 tag，也不会推送代码
+- 它只负责“发版前是否通过”的本地质量门禁
+- GitHub Action 的 `ci.yml` / `release.yml` 也会复用这套检查逻辑
+
+## 3) 一键发布到 GitHub Release
+
+文件：`scripts/release_publish.sh`
+
+作用：
+- 本地执行 `release_gate`（默认开启）
+- 推送当前分支（默认 `main`）
+- 创建并推送 tag（触发 GitHub Release workflow）
+
+用法：
+
+```bash
+./scripts/release_publish.sh --tag <version> [options]
+```
+
+参数：
+- `--tag <version>`：版本号，支持 `v0.3.0` 或 `0.3.0`
+- `--message <text>`：tag 注释
+- `--remote <name>`：远端名（默认 `origin`）
+- `--branch <name>`：发布分支（默认 `main`）
+- `--min-commits-since-tag N`：发版门禁阈值（默认 `3`）
+- `--no-gate`：跳过门禁检查
+- `--allow-dirty`：允许工作区未提交
+- `--dry-run`：仅打印命令，不执行
+- `-h, --help`：查看帮助
+
+常用示例：
+
+```bash
+./scripts/release_publish.sh --tag v0.3.0
+./scripts/release_publish.sh --tag 0.3.1 --message "Release v0.3.1"
+./scripts/release_publish.sh --tag v0.3.2 --dry-run
+```
+
+## 4) Push 后一键编译当前提交
 
 文件：`scripts/build_after_push.sh`
 
@@ -104,7 +143,7 @@ bash scripts/release_gate.sh --min-commits-since-tag 3
 ./scripts/build_after_push.sh --skip-push-check
 ```
 
-## 4) 音乐脚本 / 音乐插件
+## 5) 音乐脚本 / 音乐插件
 
 文件：`scripts/p.py`
 
@@ -132,7 +171,7 @@ python scripts/p.py [help|ls|add|single|loop|<id>|<url|BV>]
 - `musicDirectory`：音乐目录设置（默认 `/Users/cr/scripts/music`）
 - `musicPlayer`：播放器设置
 
-## 5) GitHub Actions 自动化
+## 6) GitHub Actions 自动化
 
 > 以下文件在仓库根目录（不是 `Commander/` 子目录）：
 > - `.github/workflows/ci.yml`
@@ -185,6 +224,5 @@ bash scripts/release_gate.sh --min-commits-since-tag 3
 ### 正式发版
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+./scripts/release_publish.sh --tag v0.3.0
 ```
