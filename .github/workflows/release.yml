@@ -1,0 +1,130 @@
+name: Build And Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      min_commits_since_tag:
+        description: "Minimum commits required since previous tag"
+        required: true
+        default: "3"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PROJECT_PATH: Commander.xcodeproj
+  SCHEME: commander
+  DESTINATION: platform=macOS
+  DERIVED_DATA: /tmp/CommanderReleaseBuild
+  APP_NAME: Commander
+
+jobs:
+  gate:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: Commander/.python-version
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/SourcePackages
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('Commander.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-
+
+      - name: Gate + release readiness
+        run: |
+          MIN_COMMITS="${{ github.event.inputs.min_commits_since_tag || '3' }}"
+          bash Commander/scripts/release_gate.sh --min-commits-since-tag "$MIN_COMMITS"
+
+  build_release:
+    runs-on: macos-latest
+    needs: gate
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/SourcePackages
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('Commander.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-
+
+      - name: Build release
+        run: |
+          xcodebuild \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "$DESTINATION" \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package app
+        id: package
+        run: |
+          APP_PATH="$DERIVED_DATA/Build/Products/Release/$APP_NAME.app"
+          if [[ ! -d "$APP_PATH" ]]; then
+            echo "Release app not found: $APP_PATH" >&2
+            exit 1
+          fi
+
+          VERSION_LABEL="${GITHUB_REF_NAME:-manual}"
+          ZIP_PATH="$RUNNER_TEMP/${APP_NAME}-${VERSION_LABEL}.zip"
+          SHA_PATH="$ZIP_PATH.sha256"
+
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+          shasum -a 256 "$ZIP_PATH" > "$SHA_PATH"
+
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          echo "sha_path=$SHA_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: commander-release-${{ github.ref_name }}
+          path: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.sha_path }}
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.sha_path }}
