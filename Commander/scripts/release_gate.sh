@@ -10,6 +10,7 @@ DESTINATION="platform=macOS"
 DERIVED_DATA="/tmp/CommanderGateBuild"
 MIN_COMMITS_SINCE_TAG=0
 LOCAL_VENV_PATH="${ENGINE_DIR}/.venv"
+UV_PROJECT_ENV_PATH="${REPO_ROOT}/.venv"
 
 usage() {
   cat <<'EOF'
@@ -66,7 +67,7 @@ xcodebuild \
 
 echo "==> [gate] Python compile check"
 cd "${ENGINE_DIR}"
-uv run --project . python -m py_compile \
+UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" uv run --project . python -m py_compile \
   python/command_engine/main.py \
   python/command_engine/router.py \
   python/command_engine/plugin_registry.py \
@@ -79,8 +80,8 @@ uv run --project . python -m py_compile \
   python/command_engine/plugins/music.py
 
 echo "==> [gate] Router smoke tests"
-HELP_OUTPUT="$(uv run --project . python python/commander_engine.py '{"query":"help","settings":{}}')"
-PLUGINS_OUTPUT="$(uv run --project . python python/commander_engine.py '{"query":"plugins","settings":{}}')"
+HELP_OUTPUT="$(UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" uv run --project . python python/commander_engine.py '{"query":"help","settings":{}}')"
+PLUGINS_OUTPUT="$(UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" uv run --project . python python/commander_engine.py '{"query":"plugins","settings":{}}')"
 
 if [[ "${HELP_OUTPUT}" != *"Commander Python Engine"* ]]; then
   echo "[gate] help smoke check failed"

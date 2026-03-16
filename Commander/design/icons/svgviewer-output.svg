@@ -1,0 +1,118 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 1. 终端底色：保留 macOS 深色极客面板质感 -->
+    <linearGradient id="term-bg" x1="0%" y1="0%" x2="100%" y2="100%" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E232E"/>
+      <stop offset="0.4" stop-color="#141820"/>
+      <stop offset="1" stop-color="#0A0C10"/>
+    </linearGradient>
+
+    <!-- 2. 全局氛围环境光：匹配收敛版的新三色（紫、蓝、绿） -->
+    <radialGradient id="glow-purple" cx="80%" cy="20%" r="50%" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C084FC" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#C084FC" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-blue" cx="80%" cy="50%" r="50%" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38BDF8" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-green" cx="80%" cy="80%" r="50%" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34D399" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#34D399" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 3. 数据通道渐变：从半透明渐渐变实，表现数据流出 -->
+    <linearGradient id="track-ai" x1="410" y1="470" x2="680" y2="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C084FC" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#C084FC"/>
+    </linearGradient>
+    <linearGradient id="track-web" x1="430" y1="512" x2="680" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38BDF8" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="track-sys" x1="410" y1="554" x2="680" y2="704" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34D399" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#34D399"/>
+    </linearGradient>
+
+    <!-- 4. 发光滤镜 -->
+    <!-- 霓虹强光用于彩色通道和图标 -->
+    <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- 纯净白光用于终端 Command 提示符 -->
+    <filter id="white-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- ==================== 背景层：现代化终端窗口 ==================== -->
+  <rect width="1024" height="1024" rx="236" fill="url(#term-bg)"/>
+  <rect width="1024" height="1024" rx="236" fill="url(#glow-purple)"/>
+  <rect width="1024" height="1024" rx="236" fill="url(#glow-blue)"/>
+  <rect width="1024" height="1024" rx="236" fill="url(#glow-green)"/>
+
+  <!-- 极简暗色窗口控制点 -->
+  <g fill="#FFFFFF" fill-opacity="0.08">
+    <circle cx="120" cy="120" r="14"/>
+    <circle cx="172" cy="120" r="14"/>
+    <circle cx="224" cy="120" r="14"/>
+  </g>
+  <!-- 顶部标题栏分割线 -->
+  <line x1="0" y1="180" x2="1024" y2="180" stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="2"/>
+
+  <!-- 背景暗纹：模拟终端里的其他命令/日志输出 -->
+  <g fill="#FFFFFF" fill-opacity="0.03" rx="12">
+    <rect x="120" y="250" width="240" height="24"/>
+    <rect x="120" y="310" width="380" height="24"/>
+    <rect x="120" y="700" width="180" height="24"/>
+    <rect x="120" y="760" width="280" height="24"/>
+  </g>
+
+  <!-- ==================== 左侧：绝对极简的 Command 符号 ==================== -->
+  <!-- 抛弃多余元素，仅保留最锐利粗犷的一笔勾勒终端 `>`，并加上屏幕冷白光 -->
+  <path d="M 220 332 L 380 512 L 220 692" stroke="#FFFFFF" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" filter="url(#white-glow)"/>
+
+  <!-- ==================== 中间：三条粗犷的数据通道 ==================== -->
+  <!-- 抛弃缠绕线条，紧贴着 `>` 的内角发出平滑通道，加上赛博霓虹发光 -->
+  <g stroke-width="36" stroke-linecap="round" fill="none" filter="url(#neon-glow)">
+    <!-- 向上分支：紫色的 AI 数据通道 -->
+    <path d="M 410 470 C 490 470, 560 320, 680 320" stroke="url(#track-ai)"/>
+    
+    <!-- 中间分支：蓝色的 Web 数据通道 -->
+    <path d="M 430 512 L 680 512" stroke="url(#track-web)"/>
+    
+    <!-- 向下分支：绿色的 系统任务 数据通道 -->
+    <path d="M 410 554 C 490 554, 560 704, 680 704" stroke="url(#track-sys)"/>
+  </g>
+
+  <!-- ==================== 右侧：极简几何实心图标 ==================== -->
+  <g filter="url(#neon-glow)">
+    <!-- 1. AI 节点：紫色四角魔法星 -->
+    <path d="M 770 240 C 770 290, 790 310, 840 320 C 790 330, 770 350, 770 400 C 770 350, 750 330, 700 320 C 750 310, 770 290, 770 240 Z" fill="#C084FC"/>
+
+    <!-- 2. Web/网络节点：蓝色极简星球 (增加 round linecap 使其与厚实边框统一) -->
+    <g stroke="#38BDF8" fill="none">
+      <circle cx="770" cy="512" r="40" stroke-width="16"/>
+      <ellipse cx="770" cy="512" rx="14" ry="40" stroke-width="12"/>
+      <line x1="714" y1="512" x2="826" y2="512" stroke-width="12" stroke-linecap="round"/>
+    </g>
+
+    <!-- 3. 系统/任务节点：绿色厚实六边形齿轮模块 -->
+    <g stroke="#34D399" fill="none">
+      <!-- 正六边形代表系统模块 -->
+      <path d="M 770 656 L 812 680 L 812 728 L 770 752 L 728 728 L 728 680 Z" stroke-width="24" stroke-linejoin="round"/>
+      <!-- 中心的任务核心点 -->
+      <circle cx="770" cy="704" r="10" fill="#34D399"/>
+    </g>
+  </g>
+
+</svg>

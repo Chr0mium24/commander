@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${ENGINE_DIR}/.." && pwd)"
-BUILD_SCRIPT="${ENGINE_DIR}/build_run.sh"
+BUILD_SCRIPT="${SCRIPT_DIR}/build_run.sh"
 
 CONFIGURATION="Release"
 DO_OPEN=0

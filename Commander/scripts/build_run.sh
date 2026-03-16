@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_PATH="${ROOT_DIR}/Commander.xcodeproj"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENGINE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${ENGINE_DIR}/.." && pwd)"
+PROJECT_PATH="${REPO_ROOT}/Commander.xcodeproj"
 SCHEME="commander"
 CONFIGURATION="Debug"
 DESTINATION="platform=macOS"
@@ -72,7 +74,7 @@ fi
 
 APP_PATH="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/Commander.app"
 
-LOCAL_VENV_PATH="${ROOT_DIR}/Commander/.venv"
+LOCAL_VENV_PATH="${ENGINE_DIR}/.venv"
 if [[ -d "${LOCAL_VENV_PATH}" ]]; then
   echo "==> Removing local virtualenv to avoid Xcode resource collisions: ${LOCAL_VENV_PATH}"
   rm -rf "${LOCAL_VENV_PATH}"
