@@ -72,6 +72,7 @@ Commands:
 - `set schema_json` return machine-readable schema payload
 - `run <command>` run and capture output directly
 - `run <command> &` run inside process panel (interactive/stop-able)
+- `terminal [command]` open process panel terminal (no command = blank shell)
 - `{aliases['py']} <code>` run python snippet
 - `{aliases['def']} <word>` force dictionary mode
 - `{aliases['ask']} <question>` force AI mode

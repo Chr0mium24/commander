@@ -23,6 +23,13 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
         usage="run <command or script_name> [&]",
         description="Run shell command (`&` to open interactive process panel).",
     )
+    registry.register_command(
+        "terminal",
+        handle_terminal,
+        aliases=["term", "t"],
+        usage="terminal [command or script_name]",
+        description="Open interactive process panel (empty command opens a blank shell).",
+    )
 
 
 def handle_py(context: EngineContext, content: str) -> None:
@@ -64,3 +71,23 @@ def handle_run(context: EngineContext, content: str) -> None:
     output = execute_shell(final_command, run_in_background=False)
     context.response["output"] = output
     context.response["should_save_history"] = True
+
+
+def handle_terminal(context: EngineContext, content: str) -> None:
+    run_input = content.strip()
+    if run_input:
+        final_command, _ = resolve_run_command(
+            run_input, context.script_dir, context.python_path
+        )
+        if not final_command:
+            context.response["output"] = "Usage: terminal [command or script_name]"
+            return
+    else:
+        final_command = "exec ${SHELL:-/bin/zsh} -i"
+
+    context.response["history_type"] = "run"
+    context.response["defer_shell"] = True
+    context.response["shell_command"] = final_command
+    context.response["shell_run_in_background"] = False
+    context.response["output"] = "Running in terminal..."
+    context.response["should_save_history"] = False
