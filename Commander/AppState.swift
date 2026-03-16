@@ -189,7 +189,13 @@ class AppState {
     }
 
     func completeTerminalSession(sessionID: UUID, exitCode: Int32?, transcript: String) {
-        finishTerminalSession(sessionID: sessionID, exitCode: exitCode, transcriptOverride: transcript)
+        Task { @MainActor in
+            self.finishTerminalSession(
+                sessionID: sessionID,
+                exitCode: exitCode,
+                transcriptOverride: transcript
+            )
+        }
     }
 
     private func beginExecution() -> UUID {
@@ -506,10 +512,9 @@ class AppState {
     private func scheduleTerminalStopFallback(for sessionID: UUID) {
         terminalStopFallbackTasks[sessionID]?.cancel()
 
-        terminalStopFallbackTasks[sessionID] = Task { [weak self] in
+        terminalStopFallbackTasks[sessionID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard let self else { return }
-            await self.finishTerminalSession(
+            self.finishTerminalSession(
                 sessionID: sessionID,
                 exitCode: nil,
                 transcriptOverride: nil
