@@ -9,6 +9,7 @@ SCHEME="commander"
 DESTINATION="platform=macOS"
 DERIVED_DATA="/tmp/CommanderGateBuild"
 MIN_COMMITS_SINCE_TAG=0
+LOCAL_VENV_PATH="${ENGINE_DIR}/.venv"
 
 usage() {
   cat <<'EOF'
@@ -46,6 +47,11 @@ done
 if ! [[ "${MIN_COMMITS_SINCE_TAG}" =~ ^[0-9]+$ ]]; then
   echo "--min-commits-since-tag must be a non-negative integer" >&2
   exit 2
+fi
+
+if [[ -d "${LOCAL_VENV_PATH}" ]]; then
+  echo "==> [gate] Removing local virtualenv to avoid Xcode resource collisions: ${LOCAL_VENV_PATH}"
+  rm -rf "${LOCAL_VENV_PATH}"
 fi
 
 echo "==> [gate] Build Debug"
