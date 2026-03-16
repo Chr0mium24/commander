@@ -95,16 +95,29 @@ fi
 if [[ "${MIN_COMMITS_SINCE_TAG}" -gt 0 ]]; then
   echo "==> [gate] Release readiness (min commits since tag: ${MIN_COMMITS_SINCE_TAG})"
   cd "${REPO_ROOT}"
-  LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-  if [[ -z "${LAST_TAG}" ]]; then
+  CURRENT_TAG="$(git describe --tags --exact-match 2>/dev/null || true)"
+  BASE_TAG=""
+
+  if [[ -n "${CURRENT_TAG}" ]]; then
+    BASE_TAG="$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)"
+    if [[ -n "${BASE_TAG}" ]]; then
+      echo "[gate] HEAD is tagged as ${CURRENT_TAG}; comparing against previous tag ${BASE_TAG}."
+    else
+      echo "[gate] HEAD is tagged as ${CURRENT_TAG}; no previous tag found."
+    fi
+  else
+    BASE_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${BASE_TAG}" ]]; then
     echo "[gate] No previous tag found. Treat as first release."
   else
-    COMMITS_SINCE_TAG="$(git rev-list --count "${LAST_TAG}..HEAD")"
+    COMMITS_SINCE_TAG="$(git rev-list --count "${BASE_TAG}..HEAD")"
     if [[ "${COMMITS_SINCE_TAG}" -lt "${MIN_COMMITS_SINCE_TAG}" ]]; then
-      echo "[gate] Not enough changes for release: ${COMMITS_SINCE_TAG} < ${MIN_COMMITS_SINCE_TAG} since ${LAST_TAG}" >&2
+      echo "[gate] Not enough changes for release: ${COMMITS_SINCE_TAG} < ${MIN_COMMITS_SINCE_TAG} since ${BASE_TAG}" >&2
       exit 1
     fi
-    echo "[gate] Commits since ${LAST_TAG}: ${COMMITS_SINCE_TAG}"
+    echo "[gate] Commits since ${BASE_TAG}: ${COMMITS_SINCE_TAG}"
   fi
 fi
 

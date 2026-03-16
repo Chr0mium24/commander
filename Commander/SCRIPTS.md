@@ -64,6 +64,9 @@ bash scripts/release_gate.sh [options]
 - `--min-commits-since-tag N`：要求距离上个 tag 至少 N 个提交；`0` 表示关闭该检查
 - `-h, --help`：查看帮助
 
+规则细节：
+- 如果当前 `HEAD` 本身就是一个 tag（例如发布流程里的 `v1.2.3`），脚本会自动回溯到“上一个 tag”再计算提交数，避免把当前 tag 当基线导致始终为 `0`。
+
 常用示例：
 
 ```bash
