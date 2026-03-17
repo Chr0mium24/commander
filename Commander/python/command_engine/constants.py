@@ -73,6 +73,10 @@ DEFAULT_SETTINGS = {
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 DEFAULTS_PATH = PACKAGE_ROOT / "config" / "defaults.json"
+if not DEFAULTS_PATH.is_file():
+    flattened_defaults = PACKAGE_ROOT / "defaults.json"
+    if flattened_defaults.is_file():
+        DEFAULTS_PATH = flattened_defaults
 APP_SUPPORT_DIR = Path.home() / "Library" / "Application Support" / "Commander"
 USER_CONFIG_PATH = APP_SUPPORT_DIR / "config.json"
 PLUGIN_DIR_PATH = APP_SUPPORT_DIR / "plugins"
