@@ -5,11 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      min_commits_since_tag:
-        description: "Minimum commits required since previous tag"
-        required: true
-        default: "3"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -53,10 +48,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-swiftpm-
 
-      - name: Gate + release readiness
-        run: |
-          MIN_COMMITS="${{ github.event.inputs.min_commits_since_tag || '3' }}"
-          bash Commander/scripts/release_gate.sh --min-commits-since-tag "$MIN_COMMITS"
+      - name: Gate
+        run: bash Commander/scripts/release_gate.sh
 
   build_release:
     runs-on: macos-latest

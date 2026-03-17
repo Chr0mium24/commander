@@ -8,7 +8,6 @@ GATE_SCRIPT="${SCRIPT_DIR}/release_gate.sh"
 
 REMOTE="origin"
 BRANCH="main"
-MIN_COMMITS_SINCE_TAG=3
 RUN_GATE=1
 ALLOW_DIRTY=0
 DRY_RUN=0
@@ -26,7 +25,6 @@ Options:
   --message <text>           Annotated tag message (default: "Release <tag>")
   --remote <name>            Git remote (default: origin)
   --branch <name>            Branch to push before tagging (default: main)
-  --min-commits-since-tag N  Gate threshold (default: 3)
   --no-gate                  Skip release gate checks
   --allow-dirty              Allow uncommitted working tree
   --dry-run                  Print commands only, do not execute
@@ -76,14 +74,6 @@ while [[ $# -gt 0 ]]; do
       BRANCH="$2"
       shift 2
       ;;
-    --min-commits-since-tag)
-      if [[ $# -lt 2 ]]; then
-        echo "Missing value for --min-commits-since-tag" >&2
-        exit 2
-      fi
-      MIN_COMMITS_SINCE_TAG="$2"
-      shift 2
-      ;;
     --no-gate)
       RUN_GATE=0
       shift
@@ -111,11 +101,6 @@ done
 if [[ -z "${TAG}" ]]; then
   echo "--tag is required" >&2
   usage
-  exit 2
-fi
-
-if ! [[ "${MIN_COMMITS_SINCE_TAG}" =~ ^[0-9]+$ ]]; then
-  echo "--min-commits-since-tag must be a non-negative integer" >&2
   exit 2
 fi
 
@@ -159,7 +144,7 @@ fi
 
 if [[ "${RUN_GATE}" -eq 1 ]]; then
   echo "==> Running release gate"
-  run bash "${GATE_SCRIPT}" --min-commits-since-tag "${MIN_COMMITS_SINCE_TAG}"
+  run bash "${GATE_SCRIPT}"
 fi
 
 echo "==> Pushing branch ${BRANCH} to ${REMOTE}"

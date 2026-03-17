@@ -105,7 +105,7 @@ plugins reset
 本地发版前建议：
 
 ```bash
-bash scripts/release_gate.sh --min-commits-since-tag 3
+bash scripts/release_gate.sh
 ```
 
 打 tag 触发发布：

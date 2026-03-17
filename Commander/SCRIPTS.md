@@ -52,7 +52,6 @@
 - Debug 构建检查
 - Python 引擎编译检查（`py_compile`）
 - 路由冒烟测试（`help` / `plugins`）
-- 可选“距离上次 tag 至少 N 个 commit”检查
 
 用法：
 
@@ -61,17 +60,12 @@ bash scripts/release_gate.sh [options]
 ```
 
 参数：
-- `--min-commits-since-tag N`：要求距离上个 tag 至少 N 个提交；`0` 表示关闭该检查
 - `-h, --help`：查看帮助
-
-规则细节：
-- 如果当前 `HEAD` 本身就是一个 tag（例如发布流程里的 `v1.2.3`），脚本会自动回溯到“上一个 tag”再计算提交数，避免把当前 tag 当基线导致始终为 `0`。
 
 常用示例：
 
 ```bash
 bash scripts/release_gate.sh
-bash scripts/release_gate.sh --min-commits-since-tag 3
 ```
 
 说明：
@@ -99,7 +93,6 @@ bash scripts/release_gate.sh --min-commits-since-tag 3
 - `--message <text>`：tag 注释
 - `--remote <name>`：远端名（默认 `origin`）
 - `--branch <name>`：发布分支（默认 `main`）
-- `--min-commits-since-tag N`：发版门禁阈值（默认 `3`）
 - `--no-gate`：跳过门禁检查
 - `--allow-dirty`：允许工作区未提交
 - `--dry-run`：仅打印命令，不执行
@@ -198,7 +191,7 @@ python scripts/p.py [help|ls|add|single|loop|<id>|<url|BV>]
 - 手动 `workflow_dispatch`
 
 执行内容：
-- 先跑 gate（含可配置 `min_commits_since_tag`）
+- 先跑 gate
 - 构建 Release 版本 App
 - 打包 zip + 生成 sha256
 - 上传 artifact
@@ -221,7 +214,7 @@ python scripts/p.py [help|ls|add|single|loop|<id>|<url|BV>]
 ### 发版前本地门禁
 
 ```bash
-bash scripts/release_gate.sh --min-commits-since-tag 3
+bash scripts/release_gate.sh
 ```
 
 ### 正式发版
