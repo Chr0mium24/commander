@@ -141,7 +141,7 @@ bash scripts/release_gate.sh
 
 ## 5) 音乐脚本 / 音乐插件
 
-文件：`scripts/p.py`
+文件：`python/command_engine/plugins/p.py`
 
 作用：
 - 作为 `music` 插件后端（别名 `p`）
@@ -150,7 +150,7 @@ bash scripts/release_gate.sh
 CLI 用法：
 
 ```bash
-python scripts/p.py [help|ls|add|single|loop|<id>|<url|BV>]
+python python/command_engine/plugins/p.py [help|ls|add|single|loop|<id>|<url|BV>]
 ```
 
 命令说明：
