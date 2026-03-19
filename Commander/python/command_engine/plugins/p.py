@@ -92,6 +92,8 @@ def _defer_script(context, script_args: list[str], history_input: str) -> None:
     context.response["defer_shell"] = True
     context.response["shell_run_in_background"] = False
     context.response["shell_command"] = command
+    context.response["progress_presentation"] = "terminal"
+    context.response["progress_title"] = history_input
     context.response["output"] = "Running music command..."
     context.response["history_type"] = "music"
     context.response["history_input"] = history_input

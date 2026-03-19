@@ -62,8 +62,11 @@ uv sync
 - `set` / `set list` / `set <key> <value>`：查看或修改设置
 - `plugins` / `plugins enable ...` / `plugins disable ...`：管理插件开关
 - `run <cmd>`：执行 shell 命令
-- `run <cmd> &`：在 process 面板中交互执行
-- `terminal [cmd]`：打开终端会话（可为空）
+- `run <cmd> &`：在独立 process 窗口中交互执行
+- `terminal [cmd]`：打开独立终端窗口（可为空）
+- `note [title]`：打开可编辑记事窗口
+- `todo [text]`：打开待办列表，或直接追加一条待办
+- `preview <path>`：打开独立图片/文件预览窗口
 - `ai <prompt>` / `ask <prompt>`：强制 AI 模式
 - `def <word>`：词典模式
 - `read <url>`：通过 Jina Reader 获取 Markdown

@@ -5,10 +5,12 @@ struct CommanderApp: App {
     @State private var appState: AppState
     @State private var statusItemController = StatusItemController()
     @State private var windowController: CommanderWindowController
+    @State private var progressWindowController: ProgressWindowController
 
     init() {
         let appState = AppState()
         let windowController = CommanderWindowController(appState: appState)
+        let progressWindowController = ProgressWindowController(appState: appState)
         let statusItemController = StatusItemController()
         appState.windowToggleHandler = { [weak windowController] in
             Task { @MainActor in
@@ -25,10 +27,21 @@ struct CommanderApp: App {
                 windowController?.hideWindow()
             }
         }
+        appState.progressSessionOpenHandler = { [weak progressWindowController] sessionID in
+            Task { @MainActor in
+                progressWindowController?.showSession(sessionID)
+            }
+        }
+        appState.progressSessionCloseHandler = { [weak progressWindowController] sessionID in
+            Task { @MainActor in
+                progressWindowController?.closeSession(sessionID)
+            }
+        }
         statusItemController.setup(appState: appState, windowController: windowController)
         _appState = State(initialValue: appState)
         _statusItemController = State(initialValue: statusItemController)
         _windowController = State(initialValue: windowController)
+        _progressWindowController = State(initialValue: progressWindowController)
     }
     
     var body: some Scene {

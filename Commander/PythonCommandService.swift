@@ -133,9 +133,16 @@ struct CommandEngineResponse: Decodable {
     let aiRequestAPIKey: String
     let aiRequestModel: String
     let aiRequestProxyURL: String
+    let openPanel: Bool
+    let panelPresentation: String
+    let panelTitle: String
+    let panelText: String
+    let panelPath: String
     let deferShell: Bool
     let shellCommand: String
     let shellRunInBackground: Bool
+    let progressPresentation: String
+    let progressTitle: String
     let showHistory: Bool
     let openSettings: Bool
     let shouldQuit: Bool
@@ -158,9 +165,16 @@ struct CommandEngineResponse: Decodable {
         case aiRequestAPIKey = "ai_request_api_key"
         case aiRequestModel = "ai_request_model"
         case aiRequestProxyURL = "ai_request_proxy_url"
+        case openPanel = "open_panel"
+        case panelPresentation = "panel_presentation"
+        case panelTitle = "panel_title"
+        case panelText = "panel_text"
+        case panelPath = "panel_path"
         case deferShell = "defer_shell"
         case shellCommand = "shell_command"
         case shellRunInBackground = "shell_run_in_background"
+        case progressPresentation = "progress_presentation"
+        case progressTitle = "progress_title"
         case showHistory = "show_history"
         case openSettings = "open_settings"
         case shouldQuit = "should_quit"
@@ -185,9 +199,16 @@ struct CommandEngineResponse: Decodable {
         aiRequestAPIKey = try container.decodeIfPresent(String.self, forKey: .aiRequestAPIKey) ?? ""
         aiRequestModel = try container.decodeIfPresent(String.self, forKey: .aiRequestModel) ?? ""
         aiRequestProxyURL = try container.decodeIfPresent(String.self, forKey: .aiRequestProxyURL) ?? ""
+        openPanel = try container.decodeIfPresent(Bool.self, forKey: .openPanel) ?? false
+        panelPresentation = try container.decodeIfPresent(String.self, forKey: .panelPresentation) ?? ""
+        panelTitle = try container.decodeIfPresent(String.self, forKey: .panelTitle) ?? ""
+        panelText = try container.decodeIfPresent(String.self, forKey: .panelText) ?? ""
+        panelPath = try container.decodeIfPresent(String.self, forKey: .panelPath) ?? ""
         deferShell = try container.decodeIfPresent(Bool.self, forKey: .deferShell) ?? false
         shellCommand = try container.decodeIfPresent(String.self, forKey: .shellCommand) ?? ""
         shellRunInBackground = try container.decodeIfPresent(Bool.self, forKey: .shellRunInBackground) ?? false
+        progressPresentation = try container.decodeIfPresent(String.self, forKey: .progressPresentation) ?? "terminal"
+        progressTitle = try container.decodeIfPresent(String.self, forKey: .progressTitle) ?? ""
         showHistory = try container.decodeIfPresent(Bool.self, forKey: .showHistory) ?? false
         openSettings = try container.decodeIfPresent(Bool.self, forKey: .openSettings) ?? false
         shouldQuit = try container.decodeIfPresent(Bool.self, forKey: .shouldQuit) ?? false
@@ -212,9 +233,16 @@ struct CommandEngineResponse: Decodable {
             aiRequestAPIKey: "",
             aiRequestModel: "",
             aiRequestProxyURL: "",
+            openPanel: false,
+            panelPresentation: "",
+            panelTitle: "",
+            panelText: "",
+            panelPath: "",
             deferShell: false,
             shellCommand: "",
             shellRunInBackground: false,
+            progressPresentation: "terminal",
+            progressTitle: "",
             showHistory: false,
             openSettings: false,
             shouldQuit: false,
@@ -239,9 +267,16 @@ struct CommandEngineResponse: Decodable {
         aiRequestAPIKey: String,
         aiRequestModel: String,
         aiRequestProxyURL: String,
+        openPanel: Bool,
+        panelPresentation: String,
+        panelTitle: String,
+        panelText: String,
+        panelPath: String,
         deferShell: Bool,
         shellCommand: String,
         shellRunInBackground: Bool,
+        progressPresentation: String,
+        progressTitle: String,
         showHistory: Bool,
         openSettings: Bool,
         shouldQuit: Bool,
@@ -263,9 +298,16 @@ struct CommandEngineResponse: Decodable {
         self.aiRequestAPIKey = aiRequestAPIKey
         self.aiRequestModel = aiRequestModel
         self.aiRequestProxyURL = aiRequestProxyURL
+        self.openPanel = openPanel
+        self.panelPresentation = panelPresentation
+        self.panelTitle = panelTitle
+        self.panelText = panelText
+        self.panelPath = panelPath
         self.deferShell = deferShell
         self.shellCommand = shellCommand
         self.shellRunInBackground = shellRunInBackground
+        self.progressPresentation = progressPresentation
+        self.progressTitle = progressTitle
         self.showHistory = showHistory
         self.openSettings = openSettings
         self.shouldQuit = shouldQuit
@@ -291,7 +333,7 @@ struct CommandEngineResponse: Decodable {
 }
 
 struct PythonCommandService {
-    fileprivate static let defaultInterpreter = "/usr/bin/python3"
+    fileprivate nonisolated static let defaultInterpreter = "/usr/bin/python3"
 
     static func execute(query: String, settings: CommandEngineSettings) async -> CommandEngineResponse {
         guard let scriptPath = resolveEngineScriptPath() else {
@@ -307,28 +349,45 @@ struct PythonCommandService {
         }
 
         let fallbackInterpreter = settings.pythonPath
-        let runResult = await Task.detached {
-            PythonEngineRunner.run(
-                scriptPath: scriptPath,
-                payload: payload,
-                fallbackInterpreter: fallbackInterpreter
-            )
-        }.value
+        let runResult = await PythonEngineRunner.run(
+            scriptPath: scriptPath,
+            payload: payload,
+            fallbackInterpreter: fallbackInterpreter
+        )
 
         switch runResult {
         case .failure(let message):
             return .failure(message)
         case .success(let raw):
-            guard let rawData = raw.data(using: .utf8) else {
-                return .failure("Command engine returned non-UTF8 output")
-            }
-
-            do {
-                return try JSONDecoder().decode(CommandEngineResponse.self, from: rawData)
-            } catch {
-                return .failure("Failed to decode command engine response:\n\(raw)")
-            }
+            return decodeCommandEngineResponse(from: raw)
         }
+    }
+
+    private static func decodeCommandEngineResponse(from raw: String) -> CommandEngineResponse {
+        guard let rawData = raw.data(using: .utf8) else {
+            return .failure("Command engine returned non-UTF8 output")
+        }
+
+        if let decoded = try? JSONDecoder().decode(CommandEngineResponse.self, from: rawData) {
+            return decoded
+        }
+
+        if let recovered = recoverJSONObject(from: raw),
+           let recoveredData = recovered.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(CommandEngineResponse.self, from: recoveredData) {
+            return decoded
+        }
+
+        return .failure("Failed to decode command engine response:\n\(raw)")
+    }
+
+    private static func recoverJSONObject(from raw: String) -> String? {
+        guard let start = raw.firstIndex(of: "{"),
+              let end = raw.lastIndex(of: "}") else {
+            return nil
+        }
+        guard start < end else { return nil }
+        return String(raw[start...end])
     }
 
     private static func resolveEngineScriptPath() -> String? {
@@ -366,10 +425,216 @@ private enum EngineRunResult: Sendable {
     case failure(String)
 }
 
-private enum PythonEngineRunner {
-    private static let envExecutable = "/usr/bin/env"
+private actor PersistentPythonEngine {
+    static let shared = PersistentPythonEngine()
 
-    nonisolated static func run(
+    private static let responsePrefix = "__COMMANDER_JSON__:"
+
+    private enum LaunchMode: Equatable {
+        case uv(projectDir: String?)
+        case interpreter(path: String)
+    }
+
+    private struct LaunchConfiguration: Equatable {
+        let scriptPath: String
+        let mode: LaunchMode
+    }
+
+    private var configuration: LaunchConfiguration?
+    private var process: Process?
+    private var inputHandle: FileHandle?
+    private var outputIterator: AsyncThrowingStream<String, Error>.Iterator?
+
+    func run(
+        scriptPath: String,
+        payload: String,
+        fallbackInterpreter: String
+    ) async -> EngineRunResult {
+        let projectDir = PythonEngineRunner.resolveUVProjectDir(scriptPath: scriptPath)
+        let interpreter = PythonEngineRunner.resolvedInterpreter(from: fallbackInterpreter)
+
+        let launchConfigurations: [LaunchConfiguration] = [
+            LaunchConfiguration(scriptPath: scriptPath, mode: .uv(projectDir: projectDir)),
+            LaunchConfiguration(scriptPath: scriptPath, mode: .interpreter(path: interpreter)),
+        ]
+
+        var lastError = "Failed to communicate with the command engine."
+        for launchConfiguration in launchConfigurations {
+            let result = await performRequest(payload: payload, configuration: launchConfiguration)
+            switch result {
+            case .success:
+                return result
+            case .failure(let message):
+                lastError = message
+            }
+        }
+
+        return .failure(lastError)
+    }
+
+    private func performRequest(
+        payload: String,
+        configuration: LaunchConfiguration
+    ) async -> EngineRunResult {
+        do {
+            try ensureProcess(for: configuration)
+            guard let inputHandle else {
+                invalidateProcess()
+                return .failure("Command engine input pipe is unavailable.")
+            }
+
+            if let data = "\(payload)\n".data(using: .utf8) {
+                try inputHandle.write(contentsOf: data)
+            } else {
+                return .failure("Failed to encode command engine payload.")
+            }
+
+            guard let rawResponse = await nextResponseLine() else {
+                invalidateProcess()
+                return .failure("Persistent command engine exited before returning a response.")
+            }
+
+            return .success(rawResponse)
+        } catch {
+            invalidateProcess()
+            return .failure("Failed to communicate with the command engine: \(error.localizedDescription)")
+        }
+    }
+
+    private func ensureProcess(for newConfiguration: LaunchConfiguration) throws {
+        if configuration == newConfiguration,
+           let process,
+           process.isRunning,
+           inputHandle != nil,
+           outputIterator != nil {
+            return
+        }
+
+        invalidateProcess()
+
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let process = Process()
+
+        switch newConfiguration.mode {
+        case .uv(let projectDir):
+            process.executableURL = URL(fileURLWithPath: PythonEngineRunner.envExecutable)
+            var arguments = ["uv", "run"]
+            if let projectDir, !projectDir.isEmpty {
+                arguments += ["--project", projectDir]
+            }
+            arguments += ["python", "-u", newConfiguration.scriptPath, "--stdio"]
+            process.arguments = arguments
+            process.environment = PythonEngineRunner.uvEnvironment(projectDir: projectDir)
+
+        case .interpreter(let path):
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = ["-u", newConfiguration.scriptPath, "--stdio"]
+        }
+
+        process.standardInput = inputPipe
+        process.standardOutput = outputPipe
+        process.standardError = FileHandle.nullDevice
+
+        try process.run()
+
+        configuration = newConfiguration
+        self.process = process
+        inputHandle = inputPipe.fileHandleForWriting
+        outputIterator = makeOutputIterator(handle: outputPipe.fileHandleForReading)
+    }
+
+    private func makeOutputIterator(
+        handle: FileHandle
+    ) -> AsyncThrowingStream<String, Error>.Iterator {
+        let stream = AsyncThrowingStream<String, Error> { continuation in
+            let task = Task.detached {
+                do {
+                    for try await line in handle.bytes.lines {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+
+        return stream.makeAsyncIterator()
+    }
+
+    private func nextResponseLine() async -> String? {
+        while true {
+            guard var iterator = outputIterator else { return nil }
+
+            do {
+                guard let line = try await iterator.next() else {
+                    outputIterator = nil
+                    return nil
+                }
+                outputIterator = iterator
+
+                guard let prefixRange = line.range(of: Self.responsePrefix) else {
+                    continue
+                }
+
+                return String(line[prefixRange.upperBound...])
+            } catch {
+                outputIterator = nil
+                return nil
+            }
+        }
+    }
+
+    private func invalidateProcess() {
+        inputHandle?.closeFile()
+        inputHandle = nil
+        outputIterator = nil
+
+        if let process {
+            if process.isRunning {
+                process.terminate()
+            }
+            self.process = nil
+        }
+
+        configuration = nil
+    }
+}
+
+private enum PythonEngineRunner {
+    nonisolated fileprivate static let envExecutable = "/usr/bin/env"
+
+    static func run(
+        scriptPath: String,
+        payload: String,
+        fallbackInterpreter: String
+    ) async -> EngineRunResult {
+        let persistentResult = await PersistentPythonEngine.shared.run(
+            scriptPath: scriptPath,
+            payload: payload,
+            fallbackInterpreter: fallbackInterpreter
+        )
+
+        switch persistentResult {
+        case .success:
+            return persistentResult
+        case .failure:
+            break
+        }
+
+        return runOneShot(
+            scriptPath: scriptPath,
+            payload: payload,
+            fallbackInterpreter: fallbackInterpreter
+        )
+    }
+
+    nonisolated private static func runOneShot(
         scriptPath: String,
         payload: String,
         fallbackInterpreter: String
@@ -453,7 +718,7 @@ private enum PythonEngineRunner {
         }
     }
 
-    nonisolated private static func resolvedInterpreter(from configured: String) -> String {
+    nonisolated fileprivate static func resolvedInterpreter(from configured: String) -> String {
         let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return PythonCommandService.defaultInterpreter
@@ -467,7 +732,7 @@ private enum PythonEngineRunner {
         return trimmed
     }
 
-    nonisolated private static func resolveUVProjectDir(scriptPath: String) -> String? {
+    nonisolated fileprivate static func resolveUVProjectDir(scriptPath: String) -> String? {
         let fileManager = FileManager.default
 
         var candidates: [String] = []
@@ -516,8 +781,9 @@ private enum PythonEngineRunner {
             || lowered.contains("can't find")
     }
 
-    nonisolated private static func uvEnvironment(projectDir: String?) -> [String: String] {
+    nonisolated fileprivate static func uvEnvironment(projectDir: String?) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "VIRTUAL_ENV")
 
         let fileManager = FileManager.default
         let envOverride = environment["COMMANDER_UV_ENV_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines)

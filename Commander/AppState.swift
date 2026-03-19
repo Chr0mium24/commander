@@ -7,15 +7,42 @@ extension KeyboardShortcuts.Name {
     static let toggleWindow = Self("toggleWindow", default: .init(.space, modifiers: [.option]))
 }
 
-struct TerminalSessionItem: Identifiable, Equatable {
+enum ProgressPresentation: String {
+    case terminal
+    case note
+    case todo
+    case image
+    case file
+}
+
+struct TodoItem: Identifiable, Equatable {
+    let id: UUID
+    var text: String
+    var isCompleted: Bool
+
+    init(id: UUID = UUID(), text: String, isCompleted: Bool = false) {
+        self.id = id
+        self.text = text
+        self.isCompleted = isCompleted
+    }
+}
+
+struct ProgressSessionItem: Identifiable, Equatable {
     let id: UUID
     let command: String
+    let displayTitle: String
+    let presentation: ProgressPresentation
     let historyType: String
     let historyInput: String
     var outputData: Data
+    var noteText: String
+    var todoItems: [TodoItem]
+    var todoDraft: String
+    var previewPath: String
     var isRunning: Bool
     var runInBackground: Bool
     var isCollapsed: Bool
+    var isDetached: Bool
 }
 
 @Observable
@@ -31,17 +58,19 @@ class AppState {
     var windowToggleHandler: (() -> Void)?
     var windowShowHandler: (() -> Void)?
     var windowHideHandler: (() -> Void)?
+    var progressSessionOpenHandler: ((UUID) -> Void)?
+    var progressSessionCloseHandler: ((UUID) -> Void)?
 
-    var terminalSessions: [TerminalSessionItem] = []
+    var progressSessions: [ProgressSessionItem] = []
 
     var history: [HistoryItem] = []
 
     private var activeExecutionID: UUID = UUID()
     private var activeCommandTask: Task<Void, Never>?
     private var shellSessions: [UUID: ShellSession] = [:]
-    private var terminalTerminators: [UUID: () -> Void] = [:]
-    private var terminalStopFallbackTasks: [UUID: Task<Void, Never>] = [:]
-    private var interruptedTerminalSessions: Set<UUID> = []
+    private var progressTerminators: [UUID: () -> Void] = [:]
+    private var progressStopFallbackTasks: [UUID: Task<Void, Never>] = [:]
+    private var interruptedProgressSessions: Set<UUID> = []
     private var lastSubmitAt: Date = .distantPast
     private var commandHistoryCursor: Int?
 
@@ -75,8 +104,6 @@ class AppState {
             resultText = ""
             isAIResponse = false
             showHistoryView = false
-            terminateAllShellSessions()
-            terminalSessions = []
         }
     }
 
@@ -87,8 +114,6 @@ class AppState {
         isAIResponse = false
         showHistoryView = false
         isLoading = false
-        terminateAllShellSessions()
-        terminalSessions = []
     }
 
     func executeCommand(queryOverride: String? = nil) {
@@ -160,37 +185,133 @@ class AppState {
             return
         }
 
-        guard let sessionID = terminalSessions.last(where: { $0.isRunning })?.id else { return }
-        stopTerminalSession(sessionID)
+        guard let sessionID = progressSessions.last(where: { $0.isRunning })?.id else { return }
+        stopProgressSession(sessionID)
     }
 
-    func toggleTerminalSessionCollapsed(_ sessionID: UUID) {
+    func toggleProgressSessionCollapsed(_ sessionID: UUID) {
         updateSession(sessionID) { session in
             session.isCollapsed.toggle()
         }
     }
 
-    func stopTerminalSession(_ sessionID: UUID) {
-        scheduleTerminalStopFallback(for: sessionID)
+    func stopProgressSession(_ sessionID: UUID) {
+        scheduleProgressStopFallback(for: sessionID)
 
-        if let terminator = terminalTerminators[sessionID] {
-            interruptedTerminalSessions.insert(sessionID)
+        if let terminator = progressTerminators[sessionID] {
+            interruptedProgressSessions.insert(sessionID)
             terminator()
             return
         }
 
         guard let shell = shellSessions[sessionID] else { return }
-        interruptedTerminalSessions.insert(sessionID)
+        interruptedProgressSessions.insert(sessionID)
         shell.terminate()
     }
 
-    func registerTerminalSessionController(sessionID: UUID, terminate: @escaping () -> Void) {
-        terminalTerminators[sessionID] = terminate
+    func closeProgressSession(_ sessionID: UUID) {
+        guard let session = sessionByID(sessionID) else { return }
+        if session.isRunning {
+            stopProgressSession(sessionID)
+            return
+        }
+        progressSessions.removeAll { $0.id == sessionID }
+        progressSessionCloseHandler?(sessionID)
     }
 
-    func completeTerminalSession(sessionID: UUID, exitCode: Int32?, transcript: String) {
+    func detachProgressSession(_ sessionID: UUID) {
+        guard let session = sessionByID(sessionID), !session.isDetached else { return }
+        updateSession(sessionID) { item in
+            item.isDetached = true
+        }
+        progressSessionOpenHandler?(sessionID)
+    }
+
+    func attachProgressSession(_ sessionID: UUID) {
+        guard let session = sessionByID(sessionID), session.isDetached else { return }
+        updateSession(sessionID) { item in
+            item.isDetached = false
+        }
+        progressSessionCloseHandler?(sessionID)
+    }
+
+    func restoreDetachedProgressSession(_ sessionID: UUID) {
+        guard let session = sessionByID(sessionID), session.isDetached else { return }
+        updateSession(sessionID) { item in
+            item.isDetached = false
+        }
+    }
+
+    func noteText(for sessionID: UUID) -> String {
+        sessionByID(sessionID)?.noteText ?? ""
+    }
+
+    func progressSession(id sessionID: UUID) -> ProgressSessionItem? {
+        sessionByID(sessionID)
+    }
+
+    func updateProgressNote(sessionID: UUID, text: String) {
+        updateSession(sessionID) { session in
+            session.noteText = text
+        }
+    }
+
+    func todoItems(for sessionID: UUID) -> [TodoItem] {
+        sessionByID(sessionID)?.todoItems ?? []
+    }
+
+    func todoDraft(for sessionID: UUID) -> String {
+        sessionByID(sessionID)?.todoDraft ?? ""
+    }
+
+    func updateTodoDraft(sessionID: UUID, text: String) {
+        updateSession(sessionID) { session in
+            session.todoDraft = text
+        }
+    }
+
+    func addTodoItem(sessionID: UUID, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        updateSession(sessionID) { session in
+            session.todoItems.append(TodoItem(text: trimmed))
+            session.todoDraft = ""
+        }
+    }
+
+    func toggleTodoItem(sessionID: UUID, itemID: UUID) {
+        updateSession(sessionID) { session in
+            guard let index = session.todoItems.firstIndex(where: { $0.id == itemID }) else { return }
+            session.todoItems[index].isCompleted.toggle()
+        }
+    }
+
+    func updateTodoItemText(sessionID: UUID, itemID: UUID, text: String) {
+        updateSession(sessionID) { session in
+            guard let index = session.todoItems.firstIndex(where: { $0.id == itemID }) else { return }
+            session.todoItems[index].text = text
+        }
+    }
+
+    func removeTodoItem(sessionID: UUID, itemID: UUID) {
+        updateSession(sessionID) { session in
+            session.todoItems.removeAll { $0.id == itemID }
+        }
+    }
+
+    func clearCompletedTodoItems(sessionID: UUID) {
+        updateSession(sessionID) { session in
+            session.todoItems.removeAll { $0.isCompleted }
+        }
+    }
+
+    func registerProgressSessionController(sessionID: UUID, terminate: @escaping () -> Void) {
+        progressTerminators[sessionID] = terminate
+    }
+
+    func completeProgressSession(sessionID: UUID, exitCode: Int32?, transcript: String) {
         Task { @MainActor in
-            self.finishTerminalSession(
+            self.finishProgressSession(
                 sessionID: sessionID,
                 exitCode: exitCode,
                 transcriptOverride: transcript
@@ -251,11 +372,49 @@ class AppState {
             return
         }
 
+        if response.openPanel {
+            let type = response.historyType.isEmpty ? "panel" : response.historyType
+            let input = response.historyInput.isEmpty ? originalQuery : response.historyInput
+            let presentation = ProgressPresentation(rawValue: response.panelPresentation) ?? .file
+
+            if presentation == .todo {
+                openTodoPanel(
+                    title: response.panelTitle,
+                    initialItemText: response.panelText,
+                    historyType: type,
+                    historyInput: input
+                )
+            } else {
+                openProgressPanel(
+                    title: response.panelTitle,
+                    presentation: presentation,
+                    noteText: response.panelText,
+                    previewPath: response.panelPath,
+                    historyType: type,
+                    historyInput: input
+                )
+            }
+
+            resultText = response.output
+            isAIResponse = false
+
+            if response.shouldSaveHistory {
+                let output = response.output.isEmpty ? "Opened panel." : response.output
+                finalizeCommand(type: type, input: input, output: output)
+                return
+            }
+
+            isLoading = false
+            return
+        }
+
         if response.deferShell {
             let type = response.historyType.isEmpty ? "run" : response.historyType
             let input = response.historyInput.isEmpty ? originalQuery : response.historyInput
-            startShellSession(
+            startProgressSession(
                 command: response.shellCommand,
+                displayTitle: response.progressTitle,
+                presentation: ProgressPresentation(rawValue: response.progressPresentation) ?? .terminal,
                 runInBackground: response.shellRunInBackground,
                 historyType: type,
                 historyInput: input
@@ -373,8 +532,10 @@ class AppState {
     }
 
     @MainActor
-    private func startShellSession(
+    private func startProgressSession(
         command: String,
+        displayTitle: String,
+        presentation: ProgressPresentation,
         runInBackground: Bool,
         historyType: String,
         historyInput: String
@@ -388,16 +549,27 @@ class AppState {
 
         let sessionID = UUID()
         let initialOutput = Data("$ \(trimmed)\n".utf8)
-        terminalSessions.append(
-            TerminalSessionItem(
+        let resolvedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? historyInput
+            : displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        progressSessions.append(
+            ProgressSessionItem(
                 id: sessionID,
                 command: trimmed,
+                displayTitle: resolvedTitle,
+                presentation: presentation,
                 historyType: historyType,
                 historyInput: historyInput,
                 outputData: initialOutput,
+                noteText: "",
+                todoItems: [],
+                todoDraft: "",
+                previewPath: "",
                 isRunning: true,
                 runInBackground: runInBackground,
-                isCollapsed: false
+                isCollapsed: false,
+                isDetached: false
             )
         )
         showHistoryView = false
@@ -422,7 +594,7 @@ class AppState {
                 onExit: { [weak self] status in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
-                        self.finishTerminalSession(sessionID: sessionID, exitCode: status, transcriptOverride: nil)
+                        self.finishProgressSession(sessionID: sessionID, exitCode: status, transcriptOverride: nil)
                     }
                 }
             )
@@ -436,54 +608,144 @@ class AppState {
             let fallbackOutput = sessionByID(sessionID).map {
                 String(decoding: $0.outputData, as: UTF8.self)
             } ?? "Failed to start process."
-            finishTerminalSession(sessionID: sessionID, exitCode: nil, transcriptOverride: fallbackOutput)
+            finishProgressSession(sessionID: sessionID, exitCode: nil, transcriptOverride: fallbackOutput)
         }
+    }
+
+    @MainActor
+    private func openProgressPanel(
+        title: String,
+        presentation: ProgressPresentation,
+        noteText: String,
+        previewPath: String,
+        historyType: String,
+        historyInput: String
+    ) {
+        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? historyInput
+            : title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let sessionID = UUID()
+        progressSessions.append(
+            ProgressSessionItem(
+                id: sessionID,
+                command: "",
+                displayTitle: resolvedTitle,
+                presentation: presentation,
+                historyType: historyType,
+                historyInput: historyInput,
+                outputData: Data(),
+                noteText: noteText,
+                todoItems: [],
+                todoDraft: "",
+                previewPath: previewPath,
+                isRunning: false,
+                runInBackground: false,
+                isCollapsed: false,
+                isDetached: false
+            )
+        )
+        showHistoryView = false
+    }
+
+    @MainActor
+    private func openTodoPanel(
+        title: String,
+        initialItemText: String,
+        historyType: String,
+        historyInput: String
+    ) {
+        let trimmedItem = initialItemText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let sessionID = primaryTodoSessionID() {
+            if !trimmedItem.isEmpty {
+                addTodoItem(sessionID: sessionID, text: trimmedItem)
+            }
+
+            showHistoryView = false
+
+            if let session = sessionByID(sessionID), session.isDetached {
+                progressSessionOpenHandler?(sessionID)
+            }
+            return
+        }
+
+        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Todo"
+            : title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let initialItems = trimmedItem.isEmpty ? [] : [TodoItem(text: trimmedItem)]
+        let sessionID = UUID()
+        progressSessions.append(
+            ProgressSessionItem(
+                id: sessionID,
+                command: "",
+                displayTitle: resolvedTitle,
+                presentation: .todo,
+                historyType: historyType,
+                historyInput: historyInput,
+                outputData: Data(),
+                noteText: "",
+                todoItems: initialItems,
+                todoDraft: "",
+                previewPath: "",
+                isRunning: false,
+                runInBackground: false,
+                isCollapsed: false,
+                isDetached: false
+            )
+        )
+        showHistoryView = false
     }
 
     private func indexOfSession(id: UUID) -> Int? {
-        terminalSessions.firstIndex(where: { $0.id == id })
+        progressSessions.firstIndex(where: { $0.id == id })
     }
 
-    private func sessionByID(_ sessionID: UUID) -> TerminalSessionItem? {
+    private func primaryTodoSessionID() -> UUID? {
+        progressSessions.first(where: { $0.presentation == .todo })?.id
+    }
+
+    private func sessionByID(_ sessionID: UUID) -> ProgressSessionItem? {
         guard let index = indexOfSession(id: sessionID) else { return nil }
-        return terminalSessions[index]
+        return progressSessions[index]
     }
 
-    private func updateSession(_ sessionID: UUID, mutate: (inout TerminalSessionItem) -> Void) {
+    private func updateSession(_ sessionID: UUID, mutate: (inout ProgressSessionItem) -> Void) {
         guard let index = indexOfSession(id: sessionID) else { return }
-        var session = terminalSessions[index]
+        var session = progressSessions[index]
         mutate(&session)
-        terminalSessions[index] = session
+        progressSessions[index] = session
     }
 
     private func terminateAllShellSessions() {
-        for task in terminalStopFallbackTasks.values {
+        for task in progressStopFallbackTasks.values {
             task.cancel()
         }
-        terminalStopFallbackTasks.removeAll()
+        progressStopFallbackTasks.removeAll()
 
         for shell in shellSessions.values {
             shell.terminate()
         }
-        for terminate in terminalTerminators.values {
+        for terminate in progressTerminators.values {
             terminate()
         }
         shellSessions.removeAll()
-        terminalTerminators.removeAll()
-        interruptedTerminalSessions.removeAll()
+        progressTerminators.removeAll()
+        interruptedProgressSessions.removeAll()
     }
 
     @MainActor
-    private func finishTerminalSession(sessionID: UUID, exitCode: Int32?, transcriptOverride: String?) {
+    private func finishProgressSession(sessionID: UUID, exitCode: Int32?, transcriptOverride: String?) {
         guard let session = sessionByID(sessionID) else { return }
 
-        terminalStopFallbackTasks[sessionID]?.cancel()
-        terminalStopFallbackTasks[sessionID] = nil
+        progressStopFallbackTasks[sessionID]?.cancel()
+        progressStopFallbackTasks[sessionID] = nil
 
         shellSessions[sessionID] = nil
-        terminalTerminators[sessionID] = nil
+        progressTerminators[sessionID] = nil
 
-        let interrupted = interruptedTerminalSessions.remove(sessionID) != nil
+        let interrupted = interruptedProgressSessions.remove(sessionID) != nil
         var output = (transcriptOverride ?? String(decoding: session.outputData, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -506,15 +768,24 @@ class AppState {
         }
 
         finalizeCommand(type: session.historyType, input: session.historyInput, output: output)
-        terminalSessions.removeAll { $0.id == sessionID }
+        progressSessions.removeAll { $0.id == sessionID }
+        progressSessionCloseHandler?(sessionID)
     }
 
-    private func scheduleTerminalStopFallback(for sessionID: UUID) {
-        terminalStopFallbackTasks[sessionID]?.cancel()
+    private func clearAllProgressSessions() {
+        let sessionIDs = progressSessions.map(\.id)
+        progressSessions.removeAll()
+        for sessionID in sessionIDs {
+            progressSessionCloseHandler?(sessionID)
+        }
+    }
 
-        terminalStopFallbackTasks[sessionID] = Task { @MainActor in
+    private func scheduleProgressStopFallback(for sessionID: UUID) {
+        progressStopFallbackTasks[sessionID]?.cancel()
+
+        progressStopFallbackTasks[sessionID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            self.finishTerminalSession(
+            self.finishProgressSession(
                 sessionID: sessionID,
                 exitCode: nil,
                 transcriptOverride: nil
@@ -686,8 +957,10 @@ class AppState {
         let historyInput = normalizedLanguage.isEmpty ? "run code" : "run \(normalizedLanguage) code"
         let pausedCommand = wrapCommandWithPause(runCommand)
 
-        startShellSession(
+        startProgressSession(
             command: pausedCommand,
+            displayTitle: historyInput,
+            presentation: .terminal,
             runInBackground: false,
             historyType: "run",
             historyInput: historyInput

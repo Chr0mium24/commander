@@ -2,8 +2,6 @@ import SwiftUI
 import MarkdownUI
 import Splash
 import AppKit
-import SwiftTerm
-import Darwin
 import WebKit
 
 struct ContentView: View {
@@ -25,7 +23,6 @@ struct ContentView: View {
     @State private var showOutputTools = false
     @State private var processBaseHeight: CGFloat = 190
     @GestureState private var processDragTranslation: CGFloat = 0
-    
     @Environment(\.openSettings) private var openSettings
     // 1. 引入环境变量监听当前的系统外观模式 (Dark/Light)
     @Environment(\.colorScheme) private var colorScheme
@@ -33,7 +30,7 @@ struct ContentView: View {
     private let singleLinePlaceholder = "Type 'help'..."
     private let multilinePlaceholderTop: CGFloat = 4
     private let multilinePlaceholderLeading: CGFloat = 4
-    
+
     private var processMaxHeight: CGFloat {
         420
     }
@@ -42,10 +39,10 @@ struct ContentView: View {
         min(max(120, processBaseHeight + processDragTranslation), processMaxHeight)
     }
 
-    private var runningTerminalSessions: [TerminalSessionItem] {
-        appState.terminalSessions.filter { $0.isRunning }
+    private var visibleEmbeddedProgressSessions: [ProgressSessionItem] {
+        appState.progressSessions.filter { !$0.isDetached }
     }
-
+    
     private var inputHistoryQueries: [String] {
         appState.history
             .map(\.query)
@@ -76,7 +73,7 @@ struct ContentView: View {
     }
 
     private var shouldShowOutputSection: Bool {
-        hasVisibleHistory || !runningTerminalSessions.isEmpty || appState.isLoading || hasVisibleResultText
+        hasVisibleHistory || !visibleEmbeddedProgressSessions.isEmpty || appState.isLoading || hasVisibleResultText
     }
 
     private var shouldShowOutputTools: Bool {
@@ -364,7 +361,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
-                        if !runningTerminalSessions.isEmpty {
+                        if !visibleEmbeddedProgressSessions.isEmpty {
                             Divider()
 
                             VStack(alignment: .leading, spacing: 6) {
@@ -384,12 +381,11 @@ struct ContentView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 12)
-                                    .padding(.top, 0)
 
                                 ScrollView {
                                     LazyVStack(alignment: .leading, spacing: 10) {
-                                        ForEach(runningTerminalSessions) { session in
-                                            terminalSessionCard(session)
+                                        ForEach(visibleEmbeddedProgressSessions) { session in
+                                            progressSessionCard(session)
                                         }
                                     }
                                     .padding(.horizontal, 12)
@@ -423,7 +419,7 @@ struct ContentView: View {
     }
     
     private func handleExitCommand() {
-        if !runningTerminalSessions.isEmpty {
+        if !visibleEmbeddedProgressSessions.isEmpty {
             if multilineInput {
                 collapseToSingleLine()
             } else {
@@ -568,31 +564,49 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func terminalSessionCard(_ session: TerminalSessionItem) -> some View {
+    private func progressSessionCard(_ session: ProgressSessionItem) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Button(action: {
-                    appState.toggleTerminalSessionCollapsed(session.id)
+                    appState.toggleProgressSessionCollapsed(session.id)
                 }) {
                     Image(systemName: session.isCollapsed ? "chevron.right" : "chevron.down")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
 
-                Text(session.command)
+                Image(systemName: progressIconName(for: session.presentation))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(session.displayTitle)
                     .font(.system(size: 12, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 Spacer()
 
-                Text(session.isRunning ? "Running" : "Done")
+                Text(progressStatusText(for: session))
                     .font(.caption2)
                     .foregroundStyle(session.isRunning ? .orange : .secondary)
 
+                Button("Open") {
+                    appState.detachProgressSession(session.id)
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
                 if session.isRunning {
                     Button("Stop") {
-                        appState.stopTerminalSession(session.id)
+                        appState.stopProgressSession(session.id)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Button("Close") {
+                        appState.closeProgressSession(session.id)
                     }
                     .font(.caption)
                     .buttonStyle(.bordered)
@@ -602,37 +616,95 @@ struct ContentView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
 
-            if session.runInBackground {
-                if !session.isCollapsed {
-                    Divider()
-                    Text("Background process is running.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                }
-            } else {
-                if !session.isCollapsed {
-                    Divider()
-                }
-                SwiftTermSessionView(
-                    sessionID: session.id,
-                    command: session.command,
-                    onRegisterTerminator: { id, terminate in
-                        appState.registerTerminalSessionController(sessionID: id, terminate: terminate)
-                    },
-                    onProcessTerminated: { id, exitCode, transcript in
-                        appState.completeTerminalSession(sessionID: id, exitCode: exitCode, transcript: transcript)
-                    }
-                )
-                .frame(height: session.isCollapsed ? 0 : 170)
-                .opacity(session.isCollapsed ? 0 : 1)
-                .clipped()
-                .allowsHitTesting(!session.isCollapsed)
+            if !session.isCollapsed {
+                Divider()
+                progressSessionContent(session)
             }
         }
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func progressSessionContent(_ session: ProgressSessionItem) -> some View {
+        switch session.presentation {
+        case .terminal:
+            SwiftTermSessionView(
+                sessionID: session.id,
+                command: session.command,
+                onRegisterTerminator: { id, terminate in
+                    appState.registerProgressSessionController(sessionID: id, terminate: terminate)
+                },
+                onProcessTerminated: { id, exitCode, transcript in
+                    appState.completeProgressSession(sessionID: id, exitCode: exitCode, transcript: transcript)
+                }
+            )
+            .frame(height: 170)
+            .clipped()
+
+        case .note:
+            TextEditor(
+                text: Binding(
+                    get: { appState.noteText(for: session.id) },
+                    set: { appState.updateProgressNote(sessionID: session.id, text: $0) }
+                )
+            )
+            .font(.system(size: 13, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .padding(8)
+            .frame(height: 190)
+
+        case .todo:
+            TodoSessionView(appState: appState, sessionID: session.id, compact: true)
+                .frame(height: 220)
+
+        case .image:
+            ImagePreviewSessionView(path: session.previewPath)
+                .frame(height: 220)
+
+        case .file:
+            FilePreviewSessionView(path: session.previewPath)
+                .frame(height: 220)
+        }
+    }
+
+    private func progressIconName(for presentation: ProgressPresentation) -> String {
+        switch presentation {
+        case .terminal:
+            return "terminal"
+        case .note:
+            return "note.text"
+        case .todo:
+            return "checkmark.square"
+        case .image:
+            return "photo"
+        case .file:
+            return "doc.richtext"
+        }
+    }
+
+    private func progressStatusText(for session: ProgressSessionItem) -> String {
+        if session.isRunning {
+            return "Running"
+        }
+
+        switch session.presentation {
+        case .note, .todo:
+            if session.presentation == .todo {
+                let completed = session.todoItems.filter(\.isCompleted).count
+                let open = session.todoItems.count - completed
+                if session.todoItems.isEmpty {
+                    return "Empty"
+                }
+                if completed == 0 {
+                    return "\(open) open"
+                }
+                return "\(open) open / \(completed) done"
+            }
+            return "Editable"
+        default:
+            return "Ready"
+        }
     }
 }
 
@@ -1291,155 +1363,5 @@ extension Splash.Theme {
             plainTextColor: plainTextColor, // 必填：未匹配到的符号（如括号、逗号）的颜色
             tokenColors: tokenColors        // 必填：关键字颜色字典
         )
-    }
-}
-
-private struct SwiftTermSessionView: NSViewRepresentable {
-    let sessionID: UUID
-    let command: String
-    let onRegisterTerminator: (UUID, @escaping () -> Void) -> Void
-    let onProcessTerminated: (UUID, Int32?, String) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            sessionID: sessionID,
-            command: command,
-            onRegisterTerminator: onRegisterTerminator,
-            onProcessTerminated: onProcessTerminated
-        )
-    }
-
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let view = LocalProcessTerminalView(frame: .zero)
-        view.configureNativeColors()
-        view.optionAsMetaKey = true
-        view.allowMouseReporting = true
-        view.caretViewTracksFocus = true
-        view.processDelegate = context.coordinator
-        context.coordinator.terminalView = view
-
-        let click = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.focusTerminalFromGesture(_:)))
-        view.addGestureRecognizer(click)
-        return view
-    }
-
-    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        context.coordinator.sessionID = sessionID
-        context.coordinator.command = command
-        context.coordinator.terminalView = nsView
-        context.coordinator.startProcessIfNeeded(on: nsView)
-        context.coordinator.requestInitialFocusIfNeeded()
-    }
-
-    final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
-        var sessionID: UUID
-        var command: String
-        private let onRegisterTerminator: (UUID, @escaping () -> Void) -> Void
-        private let onProcessTerminated: (UUID, Int32?, String) -> Void
-        fileprivate weak var terminalView: LocalProcessTerminalView?
-        private var hasRequestedInitialFocus = false
-        private var hasStartedProcess = false
-        private var hasReportedTermination = false
-
-        init(
-            sessionID: UUID,
-            command: String,
-            onRegisterTerminator: @escaping (UUID, @escaping () -> Void) -> Void,
-            onProcessTerminated: @escaping (UUID, Int32?, String) -> Void
-        ) {
-            self.sessionID = sessionID
-            self.command = command
-            self.onRegisterTerminator = onRegisterTerminator
-            self.onProcessTerminated = onProcessTerminated
-        }
-
-        func requestInitialFocusIfNeeded() {
-            guard !hasRequestedInitialFocus else { return }
-            guard let terminalView else { return }
-            guard terminalView.window != nil else { return }
-            hasRequestedInitialFocus = true
-            terminalView.window?.makeFirstResponder(terminalView)
-        }
-
-        @objc
-        func focusTerminalFromGesture(_ gesture: NSGestureRecognizer) {
-            guard let terminalView else { return }
-            terminalView.window?.makeFirstResponder(terminalView)
-        }
-
-        func startProcessIfNeeded(on terminal: LocalProcessTerminalView) {
-            guard !hasStartedProcess else { return }
-            hasStartedProcess = true
-
-            let arguments = ["-lc", command]
-            terminal.startProcess(
-                executable: "/bin/zsh",
-                args: arguments,
-                environment: commandEnvironment(),
-                currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path
-            )
-
-            onRegisterTerminator(sessionID) { [weak terminal] in
-                guard let terminal else { return }
-                let shellPid = terminal.process.shellPid
-                terminal.send(txt: "\u{03}")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
-                    self.terminateProcessTree(shellPid: shellPid)
-                    terminal.terminate()
-                }
-            }
-        }
-
-        private func terminateProcessTree(shellPid: pid_t) {
-            guard shellPid > 0 else { return }
-
-            if kill(-shellPid, SIGTERM) != 0 {
-                _ = kill(shellPid, SIGTERM)
-            }
-
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.45) {
-                if kill(-shellPid, 0) == 0 {
-                    _ = kill(-shellPid, SIGKILL)
-                } else if kill(shellPid, 0) == 0 {
-                    _ = kill(shellPid, SIGKILL)
-                }
-            }
-        }
-
-        private func commandEnvironment() -> [String] {
-            var list = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
-            let env = ProcessInfo.processInfo.environment
-            let pathValue = env["PATH"] ?? "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-            list.append("PATH=\(pathValue)")
-            list.append("SWIFT_CTX=1")
-            if let home = env["HOME"] {
-                list.append("HOME=\(home)")
-            }
-            return list
-        }
-
-        private func captureTranscript(from source: TerminalView) -> String {
-            let active = String(decoding: source.terminal.getBufferAsData(kind: .active), as: UTF8.self)
-            let normal = String(decoding: source.terminal.getBufferAsData(kind: .normal), as: UTF8.self)
-            let alt = String(decoding: source.terminal.getBufferAsData(kind: .alt), as: UTF8.self)
-
-            let candidates = [active, normal, alt]
-            return candidates.max(by: { $0.count < $1.count }) ?? ""
-        }
-
-        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-        func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-
-        func processTerminated(source: TerminalView, exitCode: Int32?) {
-            guard !hasReportedTermination else { return }
-            hasReportedTermination = true
-            let transcript = captureTranscript(from: source)
-
-            DispatchQueue.main.async { [sessionID, onProcessTerminated] in
-                onProcessTerminated(sessionID, exitCode, transcript)
-            }
-        }
     }
 }

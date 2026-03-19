@@ -141,12 +141,12 @@ final class CommanderWindowController: NSObject, NSWindowDelegate {
 
     private func shouldShowOutput(for appState: AppState) -> Bool {
         let hasVisibleHistory = appState.showHistoryView && !appState.history.isEmpty
-        let hasRunningSession = appState.terminalSessions.contains(where: { $0.isRunning })
+        let hasVisibleProcess = appState.progressSessions.contains(where: { !$0.isDetached })
         let hasVisibleResult = !sanitizedText(appState.resultText)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
 
-        return hasVisibleHistory || appState.isLoading || hasRunningSession || hasVisibleResult
+        return hasVisibleHistory || appState.isLoading || hasVisibleProcess || hasVisibleResult
     }
 
     private func sanitizedText(_ raw: String) -> String {
