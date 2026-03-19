@@ -304,16 +304,30 @@ struct ContentView: View {
                                             .foregroundStyle(.secondary)
                                             .padding(.top, 4)
                                     } else if !appState.resultText.isEmpty {
-                                        MarkdownResultView(
-                                            resultText: appState.resultText,
-                                            colorScheme: colorScheme,
-                                            onCopyCode: { code in
-                                                appState.copyToClipboard(code)
-                                            },
-                                            onRunCode: { language, code in
-                                                appState.runGeneratedCode(language: language, code: code)
-                                            }
-                                        )
+                                        if appState.isStreamingMarkdownActive {
+                                            StreamingMarkdownResultView(
+                                                committedMarkdown: appState.streamingMarkdownSnapshot,
+                                                pendingText: appState.streamingMarkdownTail,
+                                                colorScheme: colorScheme,
+                                                onCopyCode: { code in
+                                                    appState.copyToClipboard(code)
+                                                },
+                                                onRunCode: { language, code in
+                                                    appState.runGeneratedCode(language: language, code: code)
+                                                }
+                                            )
+                                        } else {
+                                            MarkdownResultView(
+                                                resultText: appState.resultText,
+                                                colorScheme: colorScheme,
+                                                onCopyCode: { code in
+                                                    appState.copyToClipboard(code)
+                                                },
+                                                onRunCode: { language, code in
+                                                    appState.runGeneratedCode(language: language, code: code)
+                                                }
+                                            )
+                                        }
                                     }
                                 }
 
@@ -987,6 +1001,35 @@ private struct MarkdownResultView: View {
         }
         let range = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
         return regex.firstMatch(in: markdown, options: [], range: range) != nil
+    }
+}
+
+private struct StreamingMarkdownResultView: View {
+    let committedMarkdown: String
+    let pendingText: String
+    let colorScheme: ColorScheme
+    let onCopyCode: (String) -> Void
+    let onRunCode: (String, String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !committedMarkdown.isEmpty {
+                MarkdownResultView(
+                    resultText: committedMarkdown,
+                    colorScheme: colorScheme,
+                    onCopyCode: onCopyCode,
+                    onRunCode: onRunCode
+                )
+            }
+
+            if !pendingText.isEmpty {
+                Text(verbatim: pendingText)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
     }
 }
 

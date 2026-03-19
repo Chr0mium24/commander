@@ -16,6 +16,7 @@ SETTING_KEY_MAP = {
     "gemini_proxy": ("geminiProxy", "string"),
     "history_limit": ("historyLimit", "int"),
     "auto_copy": ("autoCopy", "bool"),
+    "streaming_markdown_commit_interval": ("streamingMarkdownCommitInterval", "int"),
     "ai_provider": ("aiProvider", "string"),
     "ai_base_url": ("aiBaseURL", "string"),
     "ai_api_key": ("aiApiKey", "string"),
@@ -48,6 +49,12 @@ SETTING_SCHEMA = [
     {"key": "aiModel", "type": "string", "label": "AI Model", "group": "ai"},
     {"key": "historyLimit", "type": "int", "label": "History Limit", "group": "general"},
     {"key": "autoCopy", "type": "bool", "label": "Auto Copy", "group": "general"},
+    {
+        "key": "streamingMarkdownCommitInterval",
+        "type": "int",
+        "label": "Streaming Markdown Batch Chars",
+        "group": "general",
+    },
 ]
 
 DEFAULT_SETTINGS = {
@@ -69,6 +76,7 @@ DEFAULT_SETTINGS = {
     "aiModel": "",
     "historyLimit": 50,
     "autoCopy": False,
+    "streamingMarkdownCommitInterval": 50,
 }
 
 PACKAGE_ROOT = Path(__file__).resolve().parent

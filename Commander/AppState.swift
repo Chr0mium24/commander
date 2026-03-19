@@ -50,6 +50,9 @@ class AppState {
     var isWindowPresented: Bool = false
     var query: String = ""
     var resultText: String = ""
+    var streamingMarkdownSnapshot: String = ""
+    var streamingMarkdownTail: String = ""
+    var isStreamingMarkdownActive: Bool = false
     var isLoading: Bool = false
     var showHistoryView: Bool = false
 
@@ -77,7 +80,15 @@ class AppState {
     private let minSubmitInterval: TimeInterval = 0.20
     private let routeTimeoutNanoseconds: UInt64 = 8_000_000_000
 
+    private var streamingMarkdownCommitInterval: Int {
+        let value = UserDefaults.standard.integer(forKey: AppStorageKey.streamingMarkdownCommitInterval)
+        return value > 0 ? value : 100
+    }
+
     init() {
+        UserDefaults.standard.register(defaults: [
+            AppStorageKey.streamingMarkdownCommitInterval: 50,
+        ])
         KeyboardShortcuts.onKeyUp(for: .toggleWindow) { [weak self] in
             self?.toggleWindow()
         }
@@ -102,6 +113,7 @@ class AppState {
             query = ""
         } else {
             resultText = ""
+            resetStreamingMarkdownState()
             isAIResponse = false
             showHistoryView = false
         }
@@ -111,6 +123,7 @@ class AppState {
         commandHistoryCursor = nil
         query = ""
         resultText = ""
+        resetStreamingMarkdownState()
         isAIResponse = false
         showHistoryView = false
         isLoading = false
@@ -136,6 +149,7 @@ class AppState {
         showHistoryView = false
         isLoading = true
         resultText = ""
+        resetStreamingMarkdownState()
 
         activeCommandTask = Task {
             let response = await runRoutingWithTimeout(
@@ -338,6 +352,7 @@ class AppState {
         if showInterruptedNote {
             if isLoading {
                 resultText = "Interrupted."
+                resetStreamingMarkdownState()
             }
         }
 
@@ -367,6 +382,7 @@ class AppState {
 
         if response.showHistory {
             resultText = ""
+            resetStreamingMarkdownState()
             showHistoryView = true
             isLoading = false
             return
@@ -396,6 +412,7 @@ class AppState {
             }
 
             resultText = response.output
+            resetStreamingMarkdownState()
             isAIResponse = false
 
             if response.shouldSaveHistory {
@@ -436,6 +453,7 @@ class AppState {
         }
 
         resultText = response.output
+        resetStreamingMarkdownState()
         isAIResponse = response.isAIResponse
 
         if response.shouldSaveHistory {
@@ -461,11 +479,14 @@ class AppState {
     ) {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             resultText = "Error: Missing AI prompt."
+            resetStreamingMarkdownState()
             isLoading = false
             return
         }
 
         resultText = "Thinking..."
+        resetStreamingMarkdownState()
+        isStreamingMarkdownActive = true
 
         activeCommandTask = Task {
             var fullResponse = ""
@@ -489,11 +510,8 @@ class AppState {
 
                     await MainActor.run {
                         guard self.isCurrentExecution(executionID) else { return }
-                        if self.resultText == "Thinking..." {
-                            self.resultText = chunk
-                        } else {
-                            self.resultText += chunk
-                        }
+                        self.resultText = fullResponse
+                        self.updateStreamingMarkdownState(with: fullResponse)
                     }
                 }
 
@@ -501,6 +519,8 @@ class AppState {
                 await MainActor.run {
                     guard self.isCurrentExecution(executionID) else { return }
                     self.activeCommandTask = nil
+                    self.resultText = finalOutput
+                    self.resetStreamingMarkdownState()
                     self.isAIResponse = true
                     self.finalizeCommand(type: historyType, input: historyInput, output: finalOutput)
                 }
@@ -508,6 +528,7 @@ class AppState {
                 await MainActor.run {
                     guard self.isCurrentExecution(executionID) else { return }
                     self.activeCommandTask = nil
+                    self.resetStreamingMarkdownState()
                     self.isLoading = false
                 }
             } catch {
@@ -519,16 +540,106 @@ class AppState {
                        let word = self.extractDictionaryWord(from: historyInput),
                        let local = self.localDictionaryMarkdown(word: word) {
                         self.isAIResponse = false
+                        self.resultText = local
+                        self.resetStreamingMarkdownState()
                         self.finalizeCommand(type: "loc", input: historyInput, output: local)
                         return
                     }
 
                     self.isAIResponse = false
                     self.resultText = "Error: \(error.localizedDescription)"
+                    self.resetStreamingMarkdownState()
                     self.isLoading = false
                 }
             }
         }
+    }
+
+    @MainActor
+    private func resetStreamingMarkdownState() {
+        streamingMarkdownSnapshot = ""
+        streamingMarkdownTail = ""
+        isStreamingMarkdownActive = false
+    }
+
+    @MainActor
+    private func updateStreamingMarkdownState(with fullText: String) {
+        guard !fullText.isEmpty else {
+            resetStreamingMarkdownState()
+            return
+        }
+
+        isStreamingMarkdownActive = true
+
+        if streamingMarkdownSnapshot.count > fullText.count {
+            streamingMarkdownSnapshot = ""
+        }
+
+        let committedCount = streamingMarkdownSnapshot.count
+        let totalCount = fullText.count
+
+        if let safeBoundary = safeStreamingMarkdownBoundary(in: fullText) {
+            let safeCount = fullText.distance(from: fullText.startIndex, to: safeBoundary)
+            if safeCount > committedCount {
+                let snapshotEndIndex = fullText.index(fullText.startIndex, offsetBy: committedCount)
+                let newSegment = String(fullText[snapshotEndIndex..<safeBoundary])
+                let shouldCommit = totalCount - committedCount >= streamingMarkdownCommitInterval
+                    || containsCodeFenceMarker(in: newSegment)
+
+                if shouldCommit {
+                    streamingMarkdownSnapshot = String(fullText[..<safeBoundary])
+                }
+            }
+        }
+
+        let latestCommittedCount = streamingMarkdownSnapshot.count
+        if latestCommittedCount == 0 {
+            streamingMarkdownTail = fullText
+            return
+        }
+
+        let startIndex = fullText.index(fullText.startIndex, offsetBy: latestCommittedCount)
+        streamingMarkdownTail = String(fullText[startIndex...])
+    }
+
+    private func safeStreamingMarkdownBoundary(in text: String) -> String.Index? {
+        guard !text.isEmpty else { return nil }
+
+        var currentLineStart = text.startIndex
+        var inCodeFence = false
+        var lastSafeBoundary: String.Index?
+
+        while currentLineStart < text.endIndex {
+            let newlineIndex = text[currentLineStart...].firstIndex(of: "\n") ?? text.endIndex
+            let lineEnd = newlineIndex == text.endIndex ? text.endIndex : text.index(after: newlineIndex)
+            let line = String(text[currentLineStart..<newlineIndex]).trimmingCharacters(in: .whitespaces)
+
+            if isStreamingCodeFenceLine(line) {
+                let wasInCodeFence = inCodeFence
+                inCodeFence.toggle()
+                if wasInCodeFence && !inCodeFence {
+                    lastSafeBoundary = lineEnd
+                }
+            } else if !inCodeFence {
+                lastSafeBoundary = lineEnd
+            }
+
+            currentLineStart = lineEnd
+        }
+
+        if !inCodeFence {
+            return text.endIndex
+        }
+
+        return lastSafeBoundary
+    }
+
+    private func isStreamingCodeFenceLine(_ trimmedLine: String) -> Bool {
+        trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~")
+    }
+
+    private func containsCodeFenceMarker(in text: String) -> Bool {
+        text.contains("```") || text.contains("~~~")
     }
 
     @MainActor
@@ -949,6 +1060,7 @@ class AppState {
 
         guard let runCommand = buildRunCommandForGeneratedCode(language: language, code: trimmedCode) else {
             resultText = "Unsupported code language. Use python/bash/sh/zsh."
+            resetStreamingMarkdownState()
             isLoading = false
             return
         }
@@ -1090,6 +1202,7 @@ class AppState {
     private func applyHistorySnapshot(_ item: HistoryItem) {
         query = item.query
         resultText = item.result
+        resetStreamingMarkdownState()
         isAIResponse = ["ai", "def", "loc"].contains(item.type.lowercased())
         showHistoryView = false
         isLoading = false

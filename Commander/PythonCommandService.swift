@@ -20,6 +20,7 @@ struct CommandEngineSettings: Encodable {
 
     let historyLimit: Int
     let autoCopy: Bool
+    let streamingMarkdownCommitInterval: Int
 
     static func current() -> CommandEngineSettings {
         CommandEngineSettings(
@@ -38,7 +39,8 @@ struct CommandEngineSettings: Encodable {
             aiApiKey: UserDefaults.standard.string(forKey: AppStorageKey.aiApiKey) ?? "",
             aiModel: UserDefaults.standard.string(forKey: AppStorageKey.aiModel) ?? "",
             historyLimit: UserDefaults.standard.integer(forKey: AppStorageKey.historyLimit),
-            autoCopy: UserDefaults.standard.bool(forKey: AppStorageKey.autoCopy)
+            autoCopy: UserDefaults.standard.bool(forKey: AppStorageKey.autoCopy),
+            streamingMarkdownCommitInterval: UserDefaults.standard.integer(forKey: AppStorageKey.streamingMarkdownCommitInterval)
         )
     }
 }

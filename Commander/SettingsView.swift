@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.launchAtLogin) private var launchAtLogin = false
     @AppStorage(AppStorageKey.historyLimit) private var historyLimit = 50
     @AppStorage(AppStorageKey.autoCopy) private var autoCopy = false
+    @AppStorage(AppStorageKey.streamingMarkdownCommitInterval) private var streamingMarkdownCommitInterval = 50
     @AppStorage(AppStorageKey.multilineInput) private var multilineInput = false
 
     @AppStorage(AppStorageKey.geminiKey) private var geminiKey = ""
@@ -88,6 +89,14 @@ struct SettingsView: View {
                 }
 
                 Toggle("Auto-copy Result", isOn: $autoCopy)
+                Stepper(value: $streamingMarkdownCommitInterval, in: 10...500, step: 10) {
+                    HStack {
+                        Text("Streaming Markdown Batch Chars")
+                        Spacer()
+                        Text("\(streamingMarkdownCommitInterval)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Multiline Input", isOn: $multilineInput)
             }
 
@@ -228,6 +237,7 @@ struct SettingsView: View {
                 commandExample("set gemini_model gemini-1.5-flash")
                 commandExample("set auto_copy true")
                 commandExample("set history_limit 50")
+                commandExample("set streaming_markdown_commit_interval 50")
                 commandExample("set script_dir /Users/you/scripts")
                 commandExample("set plugin_dir ~/Library/Application\\ Support/Commander/plugins")
                 commandExample("set ai_base_url https://api.edgefn.net/v1/chat/completions")
