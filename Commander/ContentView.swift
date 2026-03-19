@@ -314,6 +314,9 @@ struct ContentView: View {
                                                 },
                                                 onRunCode: { language, code in
                                                     appState.runGeneratedCode(language: language, code: code)
+                                                },
+                                                onEditCode: { language, code in
+                                                    appState.openCodeEditor(language: language, code: code)
                                                 }
                                             )
                                         } else {
@@ -325,6 +328,9 @@ struct ContentView: View {
                                                 },
                                                 onRunCode: { language, code in
                                                     appState.runGeneratedCode(language: language, code: code)
+                                                },
+                                                onEditCode: { language, code in
+                                                    appState.openCodeEditor(language: language, code: code)
                                                 }
                                             )
                                         }
@@ -646,6 +652,7 @@ struct ContentView: View {
             SwiftTermSessionView(
                 sessionID: session.id,
                 command: session.command,
+                currentDirectory: session.currentDirectory,
                 onRegisterTerminator: { id, terminate in
                     appState.registerProgressSessionController(sessionID: id, terminate: terminate)
                 },
@@ -672,6 +679,12 @@ struct ContentView: View {
             TodoSessionView(appState: appState, sessionID: session.id, compact: true)
                 .frame(height: 220)
 
+        case .code:
+            Text("Open to edit")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 80)
+
         case .image:
             ImagePreviewSessionView(path: session.previewPath)
                 .frame(height: 220)
@@ -690,6 +703,8 @@ struct ContentView: View {
             return "note.text"
         case .todo:
             return "checkmark.square"
+        case .code:
+            return "curlybraces.square"
         case .image:
             return "photo"
         case .file:
@@ -716,6 +731,8 @@ struct ContentView: View {
                 return "\(open) open / \(completed) done"
             }
             return "Editable"
+        case .code:
+            return session.codeLanguage.isEmpty ? "Editor" : session.codeLanguage.uppercased()
         default:
             return "Ready"
         }
@@ -871,6 +888,7 @@ private struct MarkdownResultView: View {
     let colorScheme: ColorScheme
     let onCopyCode: (String) -> Void
     let onRunCode: (String, String) -> Void
+    let onEditCode: (String, String) -> Void
 
     private var renderSegments: [MarkdownRenderSegment] {
         MarkdownFormulaExtractor.extract(from: resultText)
@@ -932,6 +950,17 @@ private struct MarkdownResultView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
                 .help("Copy code")
+
+                Button {
+                    onEditCode(language, configuration.content)
+                } label: {
+                    Label("Edit", systemImage: "square.and.pencil")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help("Edit code")
 
                 if runnable {
                     Button {
@@ -1010,6 +1039,7 @@ private struct StreamingMarkdownResultView: View {
     let colorScheme: ColorScheme
     let onCopyCode: (String) -> Void
     let onRunCode: (String, String) -> Void
+    let onEditCode: (String, String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1018,7 +1048,8 @@ private struct StreamingMarkdownResultView: View {
                     resultText: committedMarkdown,
                     colorScheme: colorScheme,
                     onCopyCode: onCopyCode,
-                    onRunCode: onRunCode
+                    onRunCode: onRunCode,
+                    onEditCode: onEditCode
                 )
             }
 

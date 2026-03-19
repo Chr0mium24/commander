@@ -17,11 +17,13 @@ final class ShellSession {
     static func start(
         command: String,
         runInBackground: Bool,
+        currentDirectory: String,
         onOutput: @escaping @MainActor (Data) -> Void,
         onExit: @escaping @MainActor (Int32) -> Void
     ) throws -> ShellSession {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.currentDirectoryURL = URL(fileURLWithPath: currentDirectory, isDirectory: true)
 
         var env = ProcessInfo.processInfo.environment
         let existingPath = env["PATH"] ?? ""

@@ -79,6 +79,8 @@ final class ProgressWindowController {
             return NSSize(width: 780, height: 460)
         case .note, .todo:
             return NSSize(width: 760, height: 520)
+        case .code:
+            return NSSize(width: 920, height: 700)
         case .image, .file:
             return NSSize(width: 900, height: 640)
         }
@@ -90,6 +92,8 @@ final class ProgressWindowController {
             return NSSize(width: 520, height: 260)
         case .note, .todo:
             return NSSize(width: 420, height: 260)
+        case .code:
+            return NSSize(width: 640, height: 420)
         case .image, .file:
             return NSSize(width: 520, height: 360)
         }
@@ -176,6 +180,8 @@ struct ProgressSurfaceRootView: View {
             return "note.text"
         case .todo:
             return "checkmark.square"
+        case .code:
+            return "curlybraces.square"
         case .image:
             return "photo"
         case .file:
@@ -194,6 +200,7 @@ private struct ProgressSurfaceContentView: View {
             SwiftTermSessionView(
                 sessionID: session.id,
                 command: session.command,
+                currentDirectory: session.currentDirectory,
                 onRegisterTerminator: { id, terminate in
                     appState.registerProgressSessionController(sessionID: id, terminate: terminate)
                 },
@@ -216,6 +223,9 @@ private struct ProgressSurfaceContentView: View {
 
         case .todo:
             TodoSessionView(appState: appState, sessionID: session.id, compact: false)
+
+        case .code:
+            CodeEditorSessionView(appState: appState, sessionID: session.id)
 
         case .image:
             ImagePreviewSessionView(path: session.previewPath)
@@ -354,6 +364,226 @@ private struct TodoRowView: View {
     }
 }
 
+struct CodeEditorSessionView: View {
+    @Bindable var appState: AppState
+    let sessionID: UUID
+
+    private var language: String {
+        appState.codeEditorLanguage(for: sessionID)
+    }
+
+    private var workingDirectory: String {
+        appState.codeEditorWorkingDirectory(for: sessionID)
+    }
+
+    private var isRunnable: Bool {
+        ["python", "py", "bash", "sh", "zsh", "shell"].contains(language)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Text(language.isEmpty ? "plain text" : language)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+
+                Spacer()
+
+                Text(workingDirectory)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if isRunnable {
+                    Button("Run") {
+                        appState.runCodeEditorSession(sessionID)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            CodeEditorTextView(
+                text: Binding(
+                    get: { appState.codeEditorText(for: sessionID) },
+                    set: { appState.updateCodeEditorText(sessionID: sessionID, text: $0) }
+                ),
+                language: language
+            )
+        }
+    }
+}
+
+private struct CodeEditorTextView: NSViewRepresentable {
+    @Binding var text: String
+    let language: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, language: language)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        let textView = NSTextView()
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.backgroundColor = .clear
+        textView.textColor = .labelColor
+        textView.allowsUndo = true
+        textView.isHorizontallyResizable = true
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.delegate = context.coordinator
+
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+        context.coordinator.applyHighlightedText(text, preserveSelection: false)
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        context.coordinator.language = language
+        if context.coordinator.textView?.string != text {
+            context.coordinator.applyHighlightedText(text, preserveSelection: true)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        @Binding var text: String
+        var language: String
+        weak var textView: NSTextView?
+        private var isApplyingHighlight = false
+
+        init(text: Binding<String>, language: String) {
+            _text = text
+            self.language = language
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView else { return }
+            guard !isApplyingHighlight else { return }
+            text = textView.string
+            applyHighlightedText(textView.string, preserveSelection: true)
+        }
+
+        func applyHighlightedText(_ newText: String, preserveSelection: Bool) {
+            guard let textView else { return }
+            isApplyingHighlight = true
+            let selectedRange = textView.selectedRange()
+            textView.textStorage?.setAttributedString(
+                CodeEditorHighlighter.highlight(
+                    text: newText,
+                    language: language,
+                    colorScheme: effectiveColorScheme(for: textView)
+                )
+            )
+            if preserveSelection {
+                textView.setSelectedRange(NSRange(location: min(selectedRange.location, textView.string.count), length: 0))
+            }
+            isApplyingHighlight = false
+        }
+
+        private func effectiveColorScheme(for textView: NSTextView) -> ColorScheme {
+            let name = textView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+            return name == .darkAqua ? .dark : .light
+        }
+    }
+}
+
+private enum CodeEditorHighlighter {
+    static func highlight(text: String, language: String, colorScheme: ColorScheme) -> NSAttributedString {
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let palette = palette(for: colorScheme)
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: palette.plain,
+            ]
+        )
+
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+
+        apply(pattern: #"(?m)#.*$"#, color: palette.comment, to: attributed, in: text, range: nsRange)
+        apply(pattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'"#, color: palette.string, to: attributed, in: text, range: nsRange)
+        apply(pattern: #"\b\d+(?:\.\d+)?\b"#, color: palette.number, to: attributed, in: text, range: nsRange)
+
+        let keywords = keywordPattern(for: language)
+        if !keywords.isEmpty {
+            apply(pattern: keywords, color: palette.keyword, to: attributed, in: text, range: nsRange)
+        }
+
+        return attributed
+    }
+
+    private static func apply(
+        pattern: String,
+        color: NSColor,
+        to attributed: NSMutableAttributedString,
+        in text: String,
+        range: NSRange
+    ) {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return }
+        regex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
+            guard let match else { return }
+            attributed.addAttribute(.foregroundColor, value: color, range: match.range)
+        }
+    }
+
+    private static func keywordPattern(for language: String) -> String {
+        let normalized = language.lowercased()
+        let keywords: [String]
+        switch normalized {
+        case "python", "py":
+            keywords = ["and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for", "from", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try", "while", "with", "yield"]
+        case "bash", "sh", "zsh", "shell":
+            keywords = ["if", "then", "else", "elif", "fi", "for", "in", "do", "done", "while", "case", "esac", "function", "select", "time", "until", "export", "local", "readonly", "typeset", "return"]
+        case "swift":
+            keywords = ["class", "deinit", "enum", "extension", "func", "import", "init", "inout", "let", "operator", "private", "protocol", "public", "static", "struct", "subscript", "typealias", "var", "break", "case", "continue", "default", "defer", "do", "else", "fallthrough", "for", "guard", "if", "in", "repeat", "return", "switch", "where", "while", "as", "catch", "false", "is", "nil", "rethrows", "super", "self", "Self", "throw", "throws", "true", "try"]
+        default:
+            return ""
+        }
+
+        return #"(?<![\w$])\#(keywords.joined(separator: "|"))\b"#
+    }
+
+    private static func palette(for colorScheme: ColorScheme) -> (plain: NSColor, keyword: NSColor, string: NSColor, comment: NSColor, number: NSColor) {
+        if colorScheme == .dark {
+            return (
+                plain: .textColor,
+                keyword: NSColor(calibratedRed: 0.96, green: 0.58, blue: 0.35, alpha: 1),
+                string: NSColor(calibratedRed: 0.56, green: 0.86, blue: 0.56, alpha: 1),
+                comment: NSColor(calibratedRed: 0.53, green: 0.60, blue: 0.53, alpha: 1),
+                number: NSColor(calibratedRed: 0.49, green: 0.76, blue: 0.95, alpha: 1)
+            )
+        }
+
+        return (
+            plain: .textColor,
+            keyword: NSColor(calibratedRed: 0.48, green: 0.16, blue: 0.62, alpha: 1),
+            string: NSColor(calibratedRed: 0.74, green: 0.15, blue: 0.12, alpha: 1),
+            comment: NSColor(calibratedRed: 0.32, green: 0.48, blue: 0.33, alpha: 1),
+            number: NSColor(calibratedRed: 0.10, green: 0.30, blue: 0.74, alpha: 1)
+        )
+    }
+}
+
 struct ImagePreviewSessionView: View {
     let path: String
 
@@ -410,6 +640,7 @@ struct FilePreviewSessionView: NSViewRepresentable {
 struct SwiftTermSessionView: NSViewRepresentable {
     let sessionID: UUID
     let command: String
+    let currentDirectory: String
     let onRegisterTerminator: (UUID, @escaping () -> Void) -> Void
     let onProcessTerminated: (UUID, Int32?, String) -> Void
 
@@ -417,6 +648,7 @@ struct SwiftTermSessionView: NSViewRepresentable {
         Coordinator(
             sessionID: sessionID,
             command: command,
+            currentDirectory: currentDirectory,
             onRegisterTerminator: onRegisterTerminator,
             onProcessTerminated: onProcessTerminated
         )
@@ -442,6 +674,7 @@ struct SwiftTermSessionView: NSViewRepresentable {
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
         context.coordinator.sessionID = sessionID
         context.coordinator.command = command
+        context.coordinator.currentDirectory = currentDirectory
         context.coordinator.terminalView = nsView
         context.coordinator.startProcessIfNeeded(on: nsView)
         context.coordinator.requestInitialFocusIfNeeded()
@@ -450,6 +683,7 @@ struct SwiftTermSessionView: NSViewRepresentable {
     final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
         var sessionID: UUID
         var command: String
+        var currentDirectory: String
         private let onRegisterTerminator: (UUID, @escaping () -> Void) -> Void
         private let onProcessTerminated: (UUID, Int32?, String) -> Void
         fileprivate weak var terminalView: LocalProcessTerminalView?
@@ -460,11 +694,13 @@ struct SwiftTermSessionView: NSViewRepresentable {
         init(
             sessionID: UUID,
             command: String,
+            currentDirectory: String,
             onRegisterTerminator: @escaping (UUID, @escaping () -> Void) -> Void,
             onProcessTerminated: @escaping (UUID, Int32?, String) -> Void
         ) {
             self.sessionID = sessionID
             self.command = command
+            self.currentDirectory = currentDirectory
             self.onRegisterTerminator = onRegisterTerminator
             self.onProcessTerminated = onProcessTerminated
         }
@@ -492,7 +728,7 @@ struct SwiftTermSessionView: NSViewRepresentable {
                 executable: "/bin/zsh",
                 args: arguments,
                 environment: commandEnvironment(),
-                currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+                currentDirectory: currentDirectory
             )
 
             onRegisterTerminator(sessionID) { [weak terminal] in

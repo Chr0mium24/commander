@@ -11,6 +11,7 @@ enum ProgressPresentation: String {
     case terminal
     case note
     case todo
+    case code
     case image
     case file
 }
@@ -38,7 +39,10 @@ struct ProgressSessionItem: Identifiable, Equatable {
     var noteText: String
     var todoItems: [TodoItem]
     var todoDraft: String
+    var codeText: String
+    var codeLanguage: String
     var previewPath: String
+    var currentDirectory: String
     var isRunning: Bool
     var runInBackground: Bool
     var isCollapsed: Bool
@@ -82,7 +86,7 @@ class AppState {
 
     private var streamingMarkdownCommitInterval: Int {
         let value = UserDefaults.standard.integer(forKey: AppStorageKey.streamingMarkdownCommitInterval)
-        return value > 0 ? value : 100
+        return value > 0 ? value : 50
     }
 
     init() {
@@ -270,6 +274,24 @@ class AppState {
         }
     }
 
+    func codeEditorText(for sessionID: UUID) -> String {
+        sessionByID(sessionID)?.codeText ?? ""
+    }
+
+    func codeEditorLanguage(for sessionID: UUID) -> String {
+        sessionByID(sessionID)?.codeLanguage ?? ""
+    }
+
+    func codeEditorWorkingDirectory(for sessionID: UUID) -> String {
+        sessionByID(sessionID)?.currentDirectory ?? FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
+    func updateCodeEditorText(sessionID: UUID, text: String) {
+        updateSession(sessionID) { session in
+            session.codeText = text
+        }
+    }
+
     func todoItems(for sessionID: UUID) -> [TodoItem] {
         sessionByID(sessionID)?.todoItems ?? []
     }
@@ -317,6 +339,55 @@ class AppState {
         updateSession(sessionID) { session in
             session.todoItems.removeAll { $0.isCompleted }
         }
+    }
+
+    @MainActor
+    func openCodeEditor(language: String, code: String) {
+        guard let workspaceURL = makeGeneratedWorkspace() else {
+            resultText = "Failed to create editor workspace."
+            isLoading = false
+            return
+        }
+
+        let normalizedLanguage = normalizeGeneratedCodeLanguage(language: language, code: code) ?? language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let titleLanguage = normalizedLanguage.isEmpty ? "Code" : normalizedLanguage.uppercased()
+        let sessionID = UUID()
+        progressSessions.append(
+            ProgressSessionItem(
+                id: sessionID,
+                command: "",
+                displayTitle: "\(titleLanguage) Editor",
+                presentation: .code,
+                historyType: "code",
+                historyInput: normalizedLanguage.isEmpty ? "edit code" : "edit \(normalizedLanguage) code",
+                outputData: Data(),
+                noteText: "",
+                todoItems: [],
+                todoDraft: "",
+                codeText: code,
+                codeLanguage: normalizedLanguage,
+                previewPath: "",
+                currentDirectory: workspaceURL.path,
+                isRunning: false,
+                runInBackground: false,
+                isCollapsed: false,
+                isDetached: true
+            )
+        )
+        showHistoryView = false
+        progressSessionOpenHandler?(sessionID)
+    }
+
+    @MainActor
+    func runCodeEditorSession(_ sessionID: UUID) {
+        guard let session = sessionByID(sessionID) else { return }
+        runGeneratedCode(
+            language: session.codeLanguage,
+            code: session.codeText,
+            workingDirectory: session.currentDirectory,
+            displayTitle: session.displayTitle,
+            detachSession: true
+        )
     }
 
     func registerProgressSessionController(sessionID: UUID, terminate: @escaping () -> Void) {
@@ -649,7 +720,9 @@ class AppState {
         presentation: ProgressPresentation,
         runInBackground: Bool,
         historyType: String,
-        historyInput: String
+        historyInput: String,
+        currentDirectory: String? = nil,
+        detached: Bool = false
     ) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -663,6 +736,9 @@ class AppState {
         let resolvedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? historyInput
             : displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedDirectory = currentDirectory?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? currentDirectory!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : FileManager.default.homeDirectoryForCurrentUser.path
 
         progressSessions.append(
             ProgressSessionItem(
@@ -676,13 +752,19 @@ class AppState {
                 noteText: "",
                 todoItems: [],
                 todoDraft: "",
+                codeText: "",
+                codeLanguage: "",
                 previewPath: "",
+                currentDirectory: resolvedDirectory,
                 isRunning: true,
                 runInBackground: runInBackground,
                 isCollapsed: false,
-                isDetached: false
+                isDetached: detached
             )
         )
+        if detached {
+            progressSessionOpenHandler?(sessionID)
+        }
         showHistoryView = false
         isLoading = false
 
@@ -694,6 +776,7 @@ class AppState {
             let shell = try ShellSession.start(
                 command: trimmed,
                 runInBackground: runInBackground,
+                currentDirectory: resolvedDirectory,
                 onOutput: { [weak self] chunk in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
@@ -749,7 +832,10 @@ class AppState {
                 noteText: noteText,
                 todoItems: [],
                 todoDraft: "",
+                codeText: "",
+                codeLanguage: "",
                 previewPath: previewPath,
+                currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path,
                 isRunning: false,
                 runInBackground: false,
                 isCollapsed: false,
@@ -799,7 +885,10 @@ class AppState {
                 noteText: "",
                 todoItems: initialItems,
                 todoDraft: "",
+                codeText: "",
+                codeLanguage: "",
                 previewPath: "",
+                currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path,
                 isRunning: false,
                 runInBackground: false,
                 isCollapsed: false,
@@ -1054,20 +1143,30 @@ class AppState {
     }
 
     @MainActor
-    func runGeneratedCode(language: String, code: String) {
+    func runGeneratedCode(
+        language: String,
+        code: String,
+        workingDirectory: String? = nil,
+        displayTitle: String? = nil,
+        detachSession: Bool = false
+    ) {
         let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCode.isEmpty else { return }
 
-        guard let runCommand = buildRunCommandForGeneratedCode(language: language, code: trimmedCode) else {
+        guard let launch = buildRunCommandForGeneratedCode(
+            language: language,
+            code: trimmedCode,
+            workspaceDirectory: workingDirectory
+        ) else {
             resultText = "Unsupported code language. Use python/bash/sh/zsh."
             resetStreamingMarkdownState()
             isLoading = false
             return
         }
 
-        let normalizedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let historyInput = normalizedLanguage.isEmpty ? "run code" : "run \(normalizedLanguage) code"
-        let pausedCommand = wrapCommandWithPause(runCommand)
+        let normalizedLanguage = launch.language
+        let historyInput = displayTitle ?? (normalizedLanguage.isEmpty ? "run code" : "run \(normalizedLanguage) code")
+        let pausedCommand = wrapCommandWithPause(launch.command)
 
         startProgressSession(
             command: pausedCommand,
@@ -1075,51 +1174,101 @@ class AppState {
             presentation: .terminal,
             runInBackground: false,
             historyType: "run",
-            historyInput: historyInput
+            historyInput: historyInput,
+            currentDirectory: launch.workingDirectory.path,
+            detached: detachSession
         )
     }
 
-    private func buildRunCommandForGeneratedCode(language: String, code: String) -> String? {
-        let normalizedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let resolvedLanguage: String
+    private struct GeneratedCodeLaunch {
+        let language: String
+        let command: String
+        let workingDirectory: URL
+    }
 
-        if normalizedLanguage.isEmpty {
-            if code.hasPrefix("#!/bin/bash") || code.hasPrefix("#!/usr/bin/env bash") {
-                resolvedLanguage = "bash"
-            } else if code.hasPrefix("#!/bin/zsh") || code.hasPrefix("#!/usr/bin/env zsh") {
-                resolvedLanguage = "zsh"
-            } else if code.hasPrefix("#!/usr/bin/python") || code.hasPrefix("#!/usr/bin/env python") {
-                resolvedLanguage = "python"
-            } else {
-                return nil
-            }
+    private func buildRunCommandForGeneratedCode(
+        language: String,
+        code: String,
+        workspaceDirectory: String?
+    ) -> GeneratedCodeLaunch? {
+        guard let resolvedLanguage = normalizeGeneratedCodeLanguage(language: language, code: code) else {
+            return nil
+        }
+
+        let workspaceURL: URL
+        if let workspaceDirectory, !workspaceDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            workspaceURL = URL(fileURLWithPath: workspaceDirectory, isDirectory: true)
+        } else if let created = makeGeneratedWorkspace() {
+            workspaceURL = created
         } else {
-            resolvedLanguage = normalizedLanguage
+            return nil
         }
 
         switch resolvedLanguage {
         case "python", "py":
-            guard let fileURL = writeGeneratedScript(code: code, fileExtension: "py") else {
+            guard let fileURL = writeGeneratedScript(
+                code: code,
+                fileExtension: "py",
+                workspaceDirectory: workspaceURL
+            ) else {
                 return nil
             }
             let interpreter = UserDefaults.standard.string(forKey: AppStorageKey.pythonPath) ?? "/usr/bin/python3"
-            return "\(shellQuote(interpreter)) \(shellQuote(fileURL.path))"
+            return GeneratedCodeLaunch(
+                language: "python",
+                command: "\(shellQuote(interpreter)) \(shellQuote(fileURL.lastPathComponent))",
+                workingDirectory: workspaceURL
+            )
 
         case "bash", "sh", "shell":
-            guard let fileURL = writeGeneratedScript(code: code, fileExtension: "sh") else {
+            guard let fileURL = writeGeneratedScript(
+                code: code,
+                fileExtension: "sh",
+                workspaceDirectory: workspaceURL
+            ) else {
                 return nil
             }
-            return "/bin/bash \(shellQuote(fileURL.path))"
+            return GeneratedCodeLaunch(
+                language: "bash",
+                command: "/bin/bash \(shellQuote(fileURL.lastPathComponent))",
+                workingDirectory: workspaceURL
+            )
 
         case "zsh":
-            guard let fileURL = writeGeneratedScript(code: code, fileExtension: "sh") else {
+            guard let fileURL = writeGeneratedScript(
+                code: code,
+                fileExtension: "sh",
+                workspaceDirectory: workspaceURL
+            ) else {
                 return nil
             }
-            return "/bin/zsh \(shellQuote(fileURL.path))"
+            return GeneratedCodeLaunch(
+                language: "zsh",
+                command: "/bin/zsh \(shellQuote(fileURL.lastPathComponent))",
+                workingDirectory: workspaceURL
+            )
 
         default:
             return nil
         }
+    }
+
+    private func normalizeGeneratedCodeLanguage(language: String, code: String) -> String? {
+        let normalizedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !normalizedLanguage.isEmpty {
+            return normalizedLanguage
+        }
+
+        if code.hasPrefix("#!/bin/bash") || code.hasPrefix("#!/usr/bin/env bash") {
+            return "bash"
+        }
+        if code.hasPrefix("#!/bin/zsh") || code.hasPrefix("#!/usr/bin/env zsh") {
+            return "zsh"
+        }
+        if code.hasPrefix("#!/usr/bin/python") || code.hasPrefix("#!/usr/bin/env python") {
+            return "python"
+        }
+        return nil
     }
 
     private func wrapCommandWithPause(_ command: String) -> String {
@@ -1133,18 +1282,35 @@ class AppState {
         """
     }
 
-    private func writeGeneratedScript(code: String, fileExtension: String) -> URL? {
+    private func makeGeneratedWorkspace() -> URL? {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory.appendingPathComponent("CommanderGenerated", isDirectory: true)
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            let fileURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
-            try code.write(to: fileURL, atomically: true, encoding: .utf8)
-            try fileManager.setAttributes([.posixPermissions: NSNumber(value: 0o700)], ofItemAtPath: fileURL.path)
+            let workspaceURL = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
 
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3600) {
-                try? fileManager.removeItem(at: fileURL)
+                try? fileManager.removeItem(at: workspaceURL)
             }
+
+            return workspaceURL
+        } catch {
+            return nil
+        }
+    }
+
+    private func writeGeneratedScript(
+        code: String,
+        fileExtension: String,
+        workspaceDirectory: URL
+    ) -> URL? {
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
+            let fileURL = workspaceDirectory.appendingPathComponent("main").appendingPathExtension(fileExtension)
+            try code.write(to: fileURL, atomically: true, encoding: .utf8)
+            try fileManager.setAttributes([.posixPermissions: NSNumber(value: 0o700)], ofItemAtPath: fileURL.path)
 
             return fileURL
         } catch {
