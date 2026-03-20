@@ -99,6 +99,7 @@ class AppState {
         loadHistory()
     }
 
+    @MainActor
     func toggleWindow() {
         if let windowToggleHandler {
             windowToggleHandler()
@@ -111,6 +112,7 @@ class AppState {
         }
     }
 
+    @MainActor
     func reset() {
         commandHistoryCursor = nil
         if !query.isEmpty {
@@ -123,6 +125,7 @@ class AppState {
         }
     }
 
+    @MainActor
     func collapseToInputOnly() {
         commandHistoryCursor = nil
         query = ""
@@ -133,6 +136,7 @@ class AppState {
         isLoading = false
     }
 
+    @MainActor
     func executeCommand(queryOverride: String? = nil) {
         let sourceQuery = queryOverride ?? query
         let trimmed = sourceQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -197,6 +201,7 @@ class AppState {
         }
     }
 
+    @MainActor
     func stopCurrentTask() {
         if isLoading {
             cancelActiveExecution(showInterruptedNote: true)
@@ -414,6 +419,7 @@ class AppState {
         activeExecutionID == executionID
     }
 
+    @MainActor
     private func cancelActiveExecution(showInterruptedNote: Bool) {
         activeExecutionID = UUID()
 
@@ -541,6 +547,7 @@ class AppState {
         isLoading = false
     }
 
+    @MainActor
     private func streamAIResponse(
         prompt: String,
         historyType: String,
@@ -578,11 +585,12 @@ class AppState {
                 ) {
                     if Task.isCancelled { return }
                     fullResponse += chunk
+                    let currentResponse = fullResponse
 
                     await MainActor.run {
                         guard self.isCurrentExecution(executionID) else { return }
-                        self.resultText = fullResponse
-                        self.updateStreamingMarkdownState(with: fullResponse)
+                        self.resultText = currentResponse
+                        self.updateStreamingMarkdownState(with: currentResponse)
                     }
                 }
 
@@ -1077,10 +1085,12 @@ class AppState {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 
+    @MainActor
     func quitFromMenu() {
         quitApp()
     }
 
+    @MainActor
     func restorePreviousCommandResult() {
         guard !isLoading else { return }
         guard !history.isEmpty else { return }
@@ -1094,6 +1104,7 @@ class AppState {
         commandHistoryCursor = target
     }
 
+    @MainActor
     func restoreNextCommandResult() {
         guard !isLoading else { return }
         guard !history.isEmpty else { return }
@@ -1107,6 +1118,7 @@ class AppState {
         commandHistoryCursor = target
     }
 
+    @MainActor
     func clearCommandHistoryNavigation() {
         commandHistoryCursor = nil
     }
@@ -1340,6 +1352,7 @@ class AppState {
         }
     }
 
+    @MainActor
     func deleteHistoryItem(id: UUID) {
         history.removeAll { $0.id == id }
         if let cursor = commandHistoryCursor {
@@ -1348,6 +1361,7 @@ class AppState {
         persistHistory()
     }
 
+    @MainActor
     func restoreHistoryItem(_ item: HistoryItem) {
         applyHistorySnapshot(item)
         commandHistoryCursor = history.firstIndex(of: item)
@@ -1365,6 +1379,7 @@ class AppState {
         return defaultValue
     }
 
+    @MainActor
     private func applyHistorySnapshot(_ item: HistoryItem) {
         query = item.query
         resultText = item.result
