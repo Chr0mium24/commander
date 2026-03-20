@@ -67,6 +67,13 @@ uv sync
 
 ## 发布相关
 
+推荐工作流：
+
+1. 跑门禁，确认当前提交可发版。
+2. 运行 `release_notes.sh`，默认会自动汇总“上一个 tag 到 `HEAD`”的全部 commit。
+3. 把生成的素材交给 Codex，由 Codex 整理成正式更新日志，写入一个 Markdown 文件。
+4. 用 `release_publish.sh --notes-file <file>` 正式发版。
+
 门禁检查：
 
 ```bash
@@ -82,7 +89,7 @@ bash scripts/test_and_commit.sh --message "feat: your change"
 生成发版素材：
 
 ```bash
-bash scripts/release_notes.sh --tag v1.0.3
+bash scripts/release_notes.sh
 ```
 
 一键发版：

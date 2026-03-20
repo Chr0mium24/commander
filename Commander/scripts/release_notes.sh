@@ -18,7 +18,7 @@ Usage: scripts/release_notes.sh [options]
 Generate Markdown release notes from the previous tag (or a custom range) to a target ref.
 
 Options:
-  --tag <version>            Release tag label to show in the title, accepts "v1.0.3" or "1.0.3"
+  --tag <version>            Optional release tag label to show in the title, accepts "v1.0.3" or "1.0.3"
   --from <ref>               Start ref for commit range (default: latest reachable tag before --to)
   --to <ref>                 End ref for commit range (default: HEAD)
   --title <text>             Custom title (default: "Release <tag>" or "Release Notes")
