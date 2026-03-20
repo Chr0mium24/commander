@@ -21,12 +21,42 @@ Options:
 EOF
 }
 
+remove_path() {
+  local path="$1"
+  local label="$2"
+
+  if [[ ! -e "${path}" ]]; then
+    return 0
+  fi
+
+  echo "==> [gate] Clearing ${label}: ${path}"
+  rm -rf "${path}" 2>/dev/null || true
+
+  if [[ -e "${path}" ]]; then
+    sleep 1
+    rm -rf "${path}" 2>/dev/null || true
+  fi
+
+  if [[ -e "${path}" ]]; then
+    echo "[gate] Failed to clear ${label}: ${path}" >&2
+    exit 1
+  fi
+}
+
 require_pattern() {
   local file="$1"
   local pattern="$2"
   local message="$3"
 
-  if ! rg -U -q "${pattern}" "${file}"; then
+  if command -v rg >/dev/null 2>&1; then
+    if rg -U -q "${pattern}" "${file}"; then
+      return 0
+    fi
+  elif perl -0ne "exit(!(/${pattern}/s))" "${file}"; then
+    return 0
+  fi
+
+  if [[ -f "${file}" ]]; then
     echo "[gate] ${message}" >&2
     exit 1
   fi
@@ -47,13 +77,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -d "${LOCAL_VENV_PATH}" ]]; then
-  echo "==> [gate] Removing local virtualenv to avoid Xcode resource collisions: ${LOCAL_VENV_PATH}"
-  rm -rf "${LOCAL_VENV_PATH}"
+  remove_path "${LOCAL_VENV_PATH}" "local virtualenv to avoid Xcode resource collisions"
 fi
 
 if [[ -d "${DERIVED_DATA}" ]]; then
-  echo "==> [gate] Clearing derived data: ${DERIVED_DATA}"
-  rm -rf "${DERIVED_DATA}"
+  remove_path "${DERIVED_DATA}" "derived data"
 fi
 
 echo "==> [gate] Actor isolation compatibility checks"
