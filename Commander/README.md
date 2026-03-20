@@ -79,7 +79,7 @@ bash scripts/release_gate.sh
 bash scripts/test_and_commit.sh --message "feat: your change"
 ```
 
-生成版本说明：
+生成发版素材：
 
 ```bash
 bash scripts/release_notes.sh --tag v1.0.3
@@ -88,7 +88,7 @@ bash scripts/release_notes.sh --tag v1.0.3
 一键发版：
 
 ```bash
-bash scripts/release_publish.sh --tag v1.0.3
+bash scripts/release_publish.sh --tag v1.0.3 --notes-file /tmp/release-notes.md
 ```
 
 ## 目录说明

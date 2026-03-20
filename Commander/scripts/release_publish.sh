@@ -14,21 +14,17 @@ DRY_RUN=0
 TAG=""
 TAG_MESSAGE=""
 NOTES_FILE=""
-NOTES_FROM=""
-NOTES_TO="HEAD"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/release_publish.sh --tag <version> [options]
 
-Run release gate, generate release notes, push branch, create an annotated tag, and push tag to trigger GitHub Release workflow.
+Run release gate, verify an explicit release notes file, push branch, create an annotated tag, and push tag to trigger GitHub Release workflow.
 
 Options:
   --tag <version>            Release version tag. Accepts "v0.3.0" or "0.3.0"
   --message <text>           Release title / annotated tag heading (default: "Release <tag>")
-  --notes-file <path>        Use an existing Markdown file as the annotated tag body
-  --notes-from <ref>         Start ref for generated notes (default: latest reachable tag)
-  --notes-to <ref>           End ref for generated notes (default: HEAD)
+  --notes-file <path>        Required Markdown file used as the annotated tag body
   --remote <name>            Git remote (default: origin)
   --branch <name>            Branch to push before tagging (default: main)
   --no-gate                  Skip release gate checks
@@ -88,22 +84,6 @@ while [[ $# -gt 0 ]]; do
       NOTES_FILE="$2"
       shift 2
       ;;
-    --notes-from)
-      if [[ $# -lt 2 ]]; then
-        echo "Missing value for --notes-from" >&2
-        exit 2
-      fi
-      NOTES_FROM="$2"
-      shift 2
-      ;;
-    --notes-to)
-      if [[ $# -lt 2 ]]; then
-        echo "Missing value for --notes-to" >&2
-        exit 2
-      fi
-      NOTES_TO="$2"
-      shift 2
-      ;;
     --no-gate)
       RUN_GATE=0
       shift
@@ -134,6 +114,12 @@ if [[ -z "${TAG}" ]]; then
   exit 2
 fi
 
+if [[ -z "${NOTES_FILE}" ]]; then
+  echo "--notes-file is required. Generate context with scripts/release_notes.sh, write the final Markdown notes, then pass that file here." >&2
+  usage
+  exit 2
+fi
+
 if [[ "${TAG}" != v* ]]; then
   TAG="v${TAG}"
 fi
@@ -144,12 +130,6 @@ fi
 
 if [[ ! -f "${GATE_SCRIPT}" ]]; then
   echo "Gate script missing: ${GATE_SCRIPT}" >&2
-  exit 1
-fi
-
-RELEASE_NOTES_SCRIPT="${SCRIPT_DIR}/release_notes.sh"
-if [[ ! -f "${RELEASE_NOTES_SCRIPT}" ]]; then
-  echo "Release notes script missing: ${RELEASE_NOTES_SCRIPT}" >&2
   exit 1
 fi
 
@@ -182,29 +162,14 @@ else
   echo "[dry-run] Skipping remote tag existence check for ${REMOTE}/${TAG}"
 fi
 
-ANNOTATION_FILE=""
-ANNOTATION_FILE_IS_TEMP=0
-cleanup() {
-  if [[ "${ANNOTATION_FILE_IS_TEMP}" -eq 1 && -n "${ANNOTATION_FILE}" && -f "${ANNOTATION_FILE}" ]]; then
-    rm -f "${ANNOTATION_FILE}"
-  fi
-}
-trap cleanup EXIT
+if [[ ! -f "${NOTES_FILE}" ]]; then
+  echo "Notes file not found: ${NOTES_FILE}" >&2
+  exit 1
+fi
 
-if [[ -n "${NOTES_FILE}" ]]; then
-  if [[ ! -f "${NOTES_FILE}" ]]; then
-    echo "Notes file not found: ${NOTES_FILE}" >&2
-    exit 1
-  fi
-  ANNOTATION_FILE="${NOTES_FILE}"
-else
-  ANNOTATION_FILE="$(mktemp)"
-  ANNOTATION_FILE_IS_TEMP=1
-  NOTES_ARGS=(--tag "${TAG}" --to "${NOTES_TO}" --title "${TAG_MESSAGE}" --output "${ANNOTATION_FILE}")
-  if [[ -n "${NOTES_FROM}" ]]; then
-    NOTES_ARGS+=(--from "${NOTES_FROM}")
-  fi
-  "${RELEASE_NOTES_SCRIPT}" "${NOTES_ARGS[@]}"
+if ! grep -q '[^[:space:]]' "${NOTES_FILE}"; then
+  echo "Notes file is empty: ${NOTES_FILE}" >&2
+  exit 1
 fi
 
 if [[ "${RUN_GATE}" -eq 1 ]]; then
@@ -216,7 +181,7 @@ echo "==> Pushing branch ${BRANCH} to ${REMOTE}"
 run git push "${REMOTE}" "${BRANCH}"
 
 echo "==> Creating tag ${TAG}"
-run git tag -a "${TAG}" -F "${ANNOTATION_FILE}"
+run git tag -a "${TAG}" -F "${NOTES_FILE}"
 
 echo "==> Pushing tag ${TAG} to ${REMOTE}"
 run git push "${REMOTE}" "${TAG}"
