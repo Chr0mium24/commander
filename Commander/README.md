@@ -96,7 +96,9 @@ plugins reset
 关键脚本：
 - `build_run.sh`：本地构建/启动
 - `scripts/release_gate.sh`：发版门禁检查
-- `scripts/release_publish.sh`：一键推分支 + 打 tag + 触发 GitHub Release
+- `scripts/test_and_commit.sh`：跑门禁后自动暂存并提交
+- `scripts/release_notes.sh`：根据上一个版本自动生成 release notes
+- `scripts/release_publish.sh`：一键生成说明 + 推分支 + 打 tag + 触发 GitHub Release
 - `scripts/build_after_push.sh`：仅在已 push 后编译当前提交
 
 ## CI / Release

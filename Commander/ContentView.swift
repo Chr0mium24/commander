@@ -839,6 +839,10 @@ private enum MarkdownFormulaExtractor {
             }
 
             if !inCodeFence {
+                if !inFormula, appendInlineBlockMathSegments(from: line, into: &segments, nextID: &nextID, flushMarkdown: appendMarkdownIfNeeded) {
+                    continue
+                }
+
                 if !inFormula,
                    trimmed.hasPrefix("$$"),
                    trimmed.hasSuffix("$$"),
@@ -880,6 +884,54 @@ private enum MarkdownFormulaExtractor {
             return [MarkdownRenderSegment(id: 0, kind: .markdown(markdown))]
         }
         return segments
+    }
+
+    private static func appendInlineBlockMathSegments(
+        from line: String,
+        into segments: inout [MarkdownRenderSegment],
+        nextID: inout Int,
+        flushMarkdown: () -> Void
+    ) -> Bool {
+        guard line.contains("$$") else { return false }
+
+        var cursor = line.startIndex
+        var producedMath = false
+        var pendingMarkdown: [String] = []
+
+        func appendMarkdownSegment(_ text: String) {
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            segments.append(MarkdownRenderSegment(id: nextID, kind: .markdown(text)))
+            nextID += 1
+        }
+
+        while let open = line[cursor...].range(of: "$$") {
+            let prefix = String(line[cursor..<open.lowerBound])
+            pendingMarkdown.append(prefix)
+
+            guard let close = line[open.upperBound...].range(of: "$$") else {
+                return false
+            }
+
+            let formula = String(line[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !formula.isEmpty {
+                flushMarkdown()
+                if !pendingMarkdown.isEmpty {
+                    appendMarkdownSegment(pendingMarkdown.joined())
+                    pendingMarkdown.removeAll(keepingCapacity: true)
+                }
+                segments.append(MarkdownRenderSegment(id: nextID, kind: .math(formula)))
+                nextID += 1
+                producedMath = true
+            }
+
+            cursor = close.upperBound
+        }
+
+        pendingMarkdown.append(String(line[cursor...]))
+        if producedMath {
+            appendMarkdownSegment(pendingMarkdown.joined())
+        }
+        return producedMath
     }
 }
 

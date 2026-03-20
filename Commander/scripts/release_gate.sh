@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${ENGINE_DIR}/.." && pwd)"
 PROJECT_PATH="${REPO_ROOT}/Commander.xcodeproj"
 SCHEME="commander"
 DESTINATION="platform=macOS"
+SDK="macosx"
 DERIVED_DATA="/tmp/CommanderGateBuild"
 LOCAL_VENV_PATH="${ENGINE_DIR}/.venv"
 UV_PROJECT_ENV_PATH="${REPO_ROOT}/.venv"
@@ -39,13 +40,20 @@ if [[ -d "${LOCAL_VENV_PATH}" ]]; then
   rm -rf "${LOCAL_VENV_PATH}"
 fi
 
+if [[ -d "${DERIVED_DATA}" ]]; then
+  echo "==> [gate] Clearing derived data: ${DERIVED_DATA}"
+  rm -rf "${DERIVED_DATA}"
+fi
+
 echo "==> [gate] Build Debug"
 xcodebuild \
   -project "${PROJECT_PATH}" \
   -scheme "${SCHEME}" \
   -configuration Debug \
+  -sdk "${SDK}" \
   -destination "${DESTINATION}" \
   -derivedDataPath "${DERIVED_DATA}" \
+  -disableAutomaticPackageResolution \
   CODE_SIGNING_ALLOWED=NO \
   build
 
