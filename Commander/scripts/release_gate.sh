@@ -21,6 +21,17 @@ Options:
 EOF
 }
 
+require_pattern() {
+  local file="$1"
+  local pattern="$2"
+  local message="$3"
+
+  if ! rg -U -q "${pattern}" "${file}"; then
+    echo "[gate] ${message}" >&2
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
@@ -44,6 +55,16 @@ if [[ -d "${DERIVED_DATA}" ]]; then
   echo "==> [gate] Clearing derived data: ${DERIVED_DATA}"
   rm -rf "${DERIVED_DATA}"
 fi
+
+echo "==> [gate] Actor isolation compatibility checks"
+require_pattern \
+  "${ENGINE_DIR}/AppState.swift" \
+  '@MainActor\s*@Observable\s*class AppState' \
+  "AppState must be explicitly annotated with @MainActor for CI/Xcode compatibility."
+require_pattern \
+  "${ENGINE_DIR}/StatusItemController.swift" \
+  '@MainActor\s*final class StatusItemController' \
+  "StatusItemController must be explicitly annotated with @MainActor for CI/Xcode compatibility."
 
 echo "==> [gate] Build Debug"
 xcodebuild \
