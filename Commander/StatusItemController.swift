@@ -1,5 +1,6 @@
 import AppKit
 
+@MainActor
 final class StatusItemController: NSObject {
     private weak var appState: AppState?
     private var statusItem: NSStatusItem?

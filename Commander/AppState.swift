@@ -49,6 +49,7 @@ struct ProgressSessionItem: Identifiable, Equatable {
     var isDetached: Bool
 }
 
+@MainActor
 @Observable
 class AppState {
     var isWindowPresented: Bool = false
@@ -94,7 +95,9 @@ class AppState {
             AppStorageKey.streamingMarkdownCommitInterval: 50,
         ])
         KeyboardShortcuts.onKeyUp(for: .toggleWindow) { [weak self] in
-            self?.toggleWindow()
+            Task { @MainActor [weak self] in
+                self?.toggleWindow()
+            }
         }
         loadHistory()
     }
@@ -1301,9 +1304,10 @@ class AppState {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             let workspaceURL = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+            let workspacePath = workspaceURL.path
 
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3600) {
-                try? fileManager.removeItem(at: workspaceURL)
+                try? FileManager.default.removeItem(atPath: workspacePath)
             }
 
             return workspaceURL
