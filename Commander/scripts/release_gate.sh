@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENGINE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${ENGINE_DIR}/.." && pwd)"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 PROJECT_PATH="${REPO_ROOT}/Commander.xcodeproj"
 SCHEME="commander"
 DESTINATION="platform=macOS"

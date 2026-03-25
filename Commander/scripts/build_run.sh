@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENGINE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${ENGINE_DIR}/.." && pwd)"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 PROJECT_PATH="${REPO_ROOT}/Commander.xcodeproj"
 SCHEME="commander"
 CONFIGURATION="Debug"
@@ -13,19 +11,21 @@ DERIVED_DATA_PATH="/tmp/CommanderDerived"
 DO_CLEAN=0
 DO_OPEN=1
 DO_KILL=1
+REQUIRE_PUSHED=0
 
 usage() {
   cat <<'EOF'
 Usage: ./build_run.sh [options]
 
 Options:
-  --release    Build with Release configuration
-  --debug      Build with Debug configuration (default)
-  --clean      Clean before building
-  --no-open    Build only, do not launch app
-  --kill       Kill existing Commander process before launch (default on)
-  --no-kill    Do not kill existing Commander process before launch
-  -h, --help   Show this help
+  --release         Build with Release configuration
+  --debug           Build with Debug configuration (default)
+  --clean           Clean before building
+  --no-open         Build only, do not launch app
+  --kill            Kill existing Commander process before launch (default on)
+  --no-kill         Do not kill existing Commander process before launch
+  --require-pushed  Fail unless HEAD is synced with the configured upstream
+  -h, --help        Show this help
 EOF
 }
 
@@ -55,6 +55,10 @@ while [[ $# -gt 0 ]]; do
       DO_KILL=0
       shift
       ;;
+    --require-pushed)
+      REQUIRE_PUSHED=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -70,6 +74,12 @@ done
 if [[ ! -d "${PROJECT_PATH}" ]]; then
   echo "Project not found: ${PROJECT_PATH}" >&2
   exit 1
+fi
+
+cd "${REPO_ROOT}"
+
+if [[ "${REQUIRE_PUSHED}" -eq 1 ]]; then
+  require_synced_with_upstream
 fi
 
 APP_PATH="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/Commander.app"

@@ -83,6 +83,7 @@ cd /Users/cr/commander/Commander
 ```bash
 ./build_run.sh --release --no-open
 ./build_run.sh --clean --debug
+./build_run.sh --require-pushed --release --no-open
 ```
 
 ## 项目结构
@@ -110,16 +111,16 @@ bash Commander/scripts/release_gate.sh
 bash Commander/scripts/test_and_commit.sh --message "feat: your change"
 ```
 
-生成版本说明：
-
-```bash
-bash Commander/scripts/release_notes.sh --tag v1.0.3
-```
-
 一键发版：
 
 ```bash
 bash Commander/scripts/release_publish.sh --tag v1.0.3
+```
+
+检查发版工作流：
+
+```bash
+bash Commander/scripts/release_status.sh --tag v1.0.3 --wait
 ```
 
 ## 补充说明

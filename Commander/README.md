@@ -63,6 +63,7 @@ uv sync
 ```bash
 ./build_run.sh --release --no-open
 ./build_run.sh --clean --debug
+./build_run.sh --require-pushed --release --no-open
 ```
 
 ## 发布相关
@@ -70,9 +71,9 @@ uv sync
 推荐工作流：
 
 1. 跑门禁，确认当前提交可发版。
-2. 运行 `release_notes.sh`，默认会自动汇总“上一个 tag 到 `HEAD`”的全部 commit。
-3. 把生成的素材交给 Codex，由 Codex 整理成正式更新日志，写入一个 Markdown 文件。
-4. 用 `release_publish.sh --notes-file <file>` 正式发版。
+2. 运行 `release_publish.sh`，脚本会先输出本次范围内的全部 commit 内容，然后让你直接输入发版说明。
+3. 脚本会 push 分支、打 tag 并触发 release workflow。
+4. 用 `release_status.sh --wait` 检查 GitHub Release workflow 是否成功。
 
 门禁检查：
 
@@ -86,16 +87,16 @@ bash scripts/release_gate.sh
 bash scripts/test_and_commit.sh --message "feat: your change"
 ```
 
-生成发版素材：
-
-```bash
-bash scripts/release_notes.sh
-```
-
 一键发版：
 
 ```bash
-bash scripts/release_publish.sh --tag v1.0.3 --notes-file /tmp/release-notes.md
+bash scripts/release_publish.sh --tag v1.0.3
+```
+
+检查发版工作流：
+
+```bash
+bash scripts/release_status.sh --tag v1.0.3 --wait
 ```
 
 ## 目录说明
