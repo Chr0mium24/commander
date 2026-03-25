@@ -16,6 +16,7 @@ def base_response() -> dict[str, Any]:
         "ai_request_api_key": "",
         "ai_request_model": "",
         "ai_request_proxy_url": "",
+        "ai_request_system_prompt": "",
         "open_panel": False,
         "panel_presentation": "",
         "panel_title": "",

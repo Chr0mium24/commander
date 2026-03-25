@@ -16,7 +16,7 @@ enum ProgressPresentation: String {
     case file
 }
 
-struct TodoItem: Identifiable, Equatable {
+struct TodoItem: Identifiable, Codable, Equatable {
     let id: UUID
     var text: String
     var isCompleted: Bool
@@ -26,6 +26,27 @@ struct TodoItem: Identifiable, Equatable {
         self.text = text
         self.isCompleted = isCompleted
     }
+}
+
+enum InputAttachmentKind: String, Codable {
+    case image
+    case file
+}
+
+struct InputAttachment: Identifiable, Codable, Equatable {
+    var id: String { path }
+    let path: String
+    let kind: InputAttachmentKind
+    let mimeType: String
+
+    var filename: String {
+        URL(fileURLWithPath: path).lastPathComponent
+    }
+}
+
+private struct PersistedTodoState: Codable {
+    var items: [TodoItem]
+    var draft: String
 }
 
 struct ProgressSessionItem: Identifiable, Equatable {
@@ -72,6 +93,8 @@ class AppState {
     var progressSessions: [ProgressSessionItem] = []
 
     var history: [HistoryItem] = []
+    var inputAttachments: [InputAttachment] = []
+    var selectedAttachmentPath: String?
 
     private var activeExecutionID: UUID = UUID()
     private var activeCommandTask: Task<Void, Never>?
@@ -139,6 +162,55 @@ class AppState {
         isLoading = false
     }
 
+    func addInputAttachments(_ attachments: [InputAttachment]) {
+        guard !attachments.isEmpty else { return }
+
+        let existingPaths = Set(inputAttachments.map(\.path))
+        let additions = attachments.filter { !existingPaths.contains($0.path) }
+        guard !additions.isEmpty else { return }
+
+        inputAttachments.append(contentsOf: additions)
+        if selectedAttachmentPath == nil {
+            selectedAttachmentPath = additions.last?.path
+        }
+    }
+
+    func addInputAttachments(paths: [String]) {
+        guard !paths.isEmpty else { return }
+
+        let existing = Set(inputAttachments.map(\.path))
+        let additions = paths
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+            .filter { !existing.contains($0) }
+            .map { InputAttachment(path: $0, kind: .file, mimeType: "application/octet-stream") }
+
+        addInputAttachments(additions)
+    }
+
+    func selectAttachment(path: String?) {
+        selectedAttachmentPath = path
+    }
+
+    func removeInputAttachment(path: String) {
+        inputAttachments.removeAll { $0.path == path }
+        if selectedAttachmentPath == path {
+            selectedAttachmentPath = inputAttachments.last?.path
+        }
+    }
+
+    func clearInputAttachments() {
+        inputAttachments.removeAll()
+        selectedAttachmentPath = nil
+    }
+
+    func imageAttachmentPathsForAI() -> [String] {
+        inputAttachments
+            .filter { $0.kind == .image }
+            .map(\.path)
+    }
+
     @MainActor
     func executeCommand(queryOverride: String? = nil) {
         let sourceQuery = queryOverride ?? query
@@ -163,9 +235,11 @@ class AppState {
         resetStreamingMarkdownState()
 
         activeCommandTask = Task {
+            let attachments = self.inputAttachments
             let response = await runRoutingWithTimeout(
                 query: trimmed,
                 settings: CommandEngineSettings.current(),
+                attachments: attachments,
                 timeoutNanoseconds: routeTimeoutNanoseconds
             )
 
@@ -178,11 +252,12 @@ class AppState {
     private func runRoutingWithTimeout(
         query: String,
         settings: CommandEngineSettings,
+        attachments: [InputAttachment],
         timeoutNanoseconds: UInt64
     ) async -> CommandEngineResponse {
         await withTaskGroup(of: CommandEngineResponse.self) { group in
             group.addTask {
-                await PythonCommandService.execute(query: query, settings: settings)
+                await PythonCommandService.execute(query: query, settings: settings, attachments: attachments)
             }
 
             group.addTask {
@@ -568,6 +643,7 @@ class AppState {
         resultText = "Thinking..."
         resetStreamingMarkdownState()
         isStreamingMarkdownActive = true
+        let imagePaths = imageAttachmentPathsForAI()
 
         activeCommandTask = Task {
             var fullResponse = ""
@@ -579,12 +655,14 @@ class AppState {
                     baseURL: aiRequest.baseURL,
                     apiKey: aiRequest.apiKey,
                     model: aiRequest.model,
-                    proxyURL: aiRequest.proxyURL
+                    proxyURL: aiRequest.proxyURL,
+                    systemPrompt: aiRequest.systemPrompt
                 )
 
                 for try await chunk in GeminiStreamingService.streamResponse(
                     prompt: prompt,
-                    request: resolvedRequest
+                    request: resolvedRequest,
+                    imagePaths: imagePaths
                 ) {
                     if Task.isCancelled { return }
                     fullResponse += chunk
@@ -882,7 +960,14 @@ class AppState {
             ? "Todo"
             : title.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let initialItems = trimmedItem.isEmpty ? [] : [TodoItem(text: trimmedItem)]
+        let persistedState = persistedTodoState()
+        var initialItems = persistedState.items
+        let initialDraft = persistedState.draft
+
+        if !trimmedItem.isEmpty {
+            initialItems.append(TodoItem(text: trimmedItem))
+        }
+
         let sessionID = UUID()
         progressSessions.append(
             ProgressSessionItem(
@@ -895,7 +980,7 @@ class AppState {
                 outputData: Data(),
                 noteText: "",
                 todoItems: initialItems,
-                todoDraft: "",
+                todoDraft: initialDraft,
                 codeText: "",
                 codeLanguage: "",
                 previewPath: "",
@@ -906,6 +991,7 @@ class AppState {
                 isDetached: false
             )
         )
+        persistTodoState(items: initialItems, draft: initialDraft)
         showHistoryView = false
     }
 
@@ -927,6 +1013,9 @@ class AppState {
         var session = progressSessions[index]
         mutate(&session)
         progressSessions[index] = session
+        if session.presentation == .todo {
+            persistTodoState(items: session.todoItems, draft: session.todoDraft)
+        }
     }
 
     private func terminateAllShellSessions() {
@@ -1336,6 +1425,22 @@ class AppState {
 
     private func shellQuote(_ input: String) -> String {
         "'" + input.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
+    private func persistedTodoState() -> PersistedTodoState {
+        guard let data = UserDefaults.standard.data(forKey: AppStorageKey.todoState),
+              let decoded = try? JSONDecoder().decode(PersistedTodoState.self, from: data)
+        else {
+            return PersistedTodoState(items: [], draft: "")
+        }
+        return decoded
+    }
+
+    private func persistTodoState(items: [TodoItem], draft: String) {
+        let state = PersistedTodoState(items: items, draft: draft)
+        if let data = try? JSONEncoder().encode(state) {
+            UserDefaults.standard.set(data, forKey: AppStorageKey.todoState)
+        }
     }
 
     private func historyFileURL() -> URL {

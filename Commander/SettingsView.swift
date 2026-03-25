@@ -19,6 +19,7 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.aiBaseURL) private var aiBaseURL = ""
     @AppStorage(AppStorageKey.aiApiKey) private var aiApiKey = ""
     @AppStorage(AppStorageKey.aiModel) private var aiModel = ""
+    @AppStorage(AppStorageKey.aiSystemPrompt) private var aiSystemPrompt = ""
 
     @AppStorage(AppStorageKey.aliasDef) private var aliasDef = "def"
     @AppStorage(AppStorageKey.aliasAsk) private var aliasAsk = "ask"
@@ -201,6 +202,18 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Prompting") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("System Prompt")
+                    TextEditor(text: $aiSystemPrompt)
+                        .frame(minHeight: 90)
+                        .font(.system(.body, design: .monospaced))
+                    Text("Applied to built-in AI chat requests. Example: require inline math to use `$...$`.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
     }
@@ -242,6 +255,7 @@ struct SettingsView: View {
                 commandExample("set plugin_dir ~/Library/Application\\ Support/Commander/plugins")
                 commandExample("set ai_base_url https://api.edgefn.net/v1/chat/completions")
                 commandExample("set ai_api_key sk-...")
+                commandExample("set ai_system_prompt 回答里的行内公式必须使用$...$包裹")
                 commandExample("set")
                 commandExample("plugins inspect")
 

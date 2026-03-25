@@ -14,10 +14,12 @@ enum AppStorageKey {
     static let autoCopy = "autoCopy"
     static let streamingMarkdownCommitInterval = "streamingMarkdownCommitInterval"
     static let multilineInput = "multilineInput"
+    static let aiSystemPrompt = "aiSystemPrompt"
+    static let todoState = "todoState"
     
     static let geminiKey = "geminiApiKey"
     static let geminiModel = "geminiModel"
-    static let geminiProxy = "geminiProxy" // [新增] 代理地址 Key
+    static let geminiProxy = "geminiProxy"
 
     static let aiProvider = "aiProvider"
     static let aiBaseURL = "aiBaseURL"

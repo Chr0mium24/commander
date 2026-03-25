@@ -1,4 +1,5 @@
 import Foundation
+internal import UniformTypeIdentifiers
 
 struct GeminiStreamingService {
     enum RequestKind: String, Sendable {
@@ -13,6 +14,7 @@ struct GeminiStreamingService {
         let apiKey: String
         let model: String
         let proxyURL: String
+        let systemPrompt: String
     }
 
     static func resolveRequest(
@@ -21,7 +23,8 @@ struct GeminiStreamingService {
         baseURL: String,
         apiKey: String,
         model: String,
-        proxyURL: String
+        proxyURL: String,
+        systemPrompt: String
     ) throws -> AIRequest {
         let normalizedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let requestKind: RequestKind
@@ -48,6 +51,7 @@ struct GeminiStreamingService {
         let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedProxyURL = proxyURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSystemPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch requestKind {
         case .gemini:
@@ -64,7 +68,8 @@ struct GeminiStreamingService {
                 baseURL: resolvedBaseURL,
                 apiKey: trimmedAPIKey,
                 model: resolvedModel,
-                proxyURL: trimmedProxyURL
+                proxyURL: trimmedProxyURL,
+                systemPrompt: trimmedSystemPrompt
             )
 
         case .openAICompatible:
@@ -86,23 +91,36 @@ struct GeminiStreamingService {
                 baseURL: resolvedBaseURL,
                 apiKey: trimmedAPIKey,
                 model: trimmedModel,
-                proxyURL: trimmedProxyURL
+                proxyURL: trimmedProxyURL,
+                systemPrompt: trimmedSystemPrompt
             )
         }
     }
 
     static func streamResponse(
         prompt: String,
-        request: AIRequest
+        request: AIRequest,
+        imagePaths: [String]
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
+                    let images = try loadImageInputs(from: imagePaths)
                     switch request.kind {
                     case .gemini:
-                        try await streamGemini(prompt: prompt, request: request, continuation: continuation)
+                        try await streamGemini(
+                            prompt: prompt,
+                            request: request,
+                            images: images,
+                            continuation: continuation
+                        )
                     case .openAICompatible:
-                        try await streamOpenAICompatible(prompt: prompt, request: request, continuation: continuation)
+                        try await streamOpenAICompatible(
+                            prompt: prompt,
+                            request: request,
+                            images: images,
+                            continuation: continuation
+                        )
                     }
                 } catch {
                     continuation.finish(throwing: error)
@@ -113,6 +131,11 @@ struct GeminiStreamingService {
 }
 
 private extension GeminiStreamingService {
+    struct ImageInput: Sendable {
+        let mimeType: String
+        let base64: String
+    }
+
     static func defaultOpenAIBaseURL(for provider: String) -> String {
         switch provider {
         case "edge", "edgefn":
@@ -144,9 +167,27 @@ private extension GeminiStreamingService {
         return URLSession(configuration: config)
     }
 
+    static func loadImageInputs(from imagePaths: [String]) throws -> [ImageInput] {
+        try imagePaths.map { path in
+            let url = URL(fileURLWithPath: path)
+            let data = try Data(contentsOf: url)
+            let mimeType = inferMimeType(for: url)
+            return ImageInput(mimeType: mimeType, base64: data.base64EncodedString())
+        }
+    }
+
+    static func inferMimeType(for url: URL) -> String {
+        if let type = UTType(filenameExtension: url.pathExtension.lowercased()),
+           let mimeType = type.preferredMIMEType {
+            return mimeType
+        }
+        return "application/octet-stream"
+    }
+
     static func streamGemini(
         prompt: String,
         request: AIRequest,
+        images: [ImageInput],
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
         let encodedModel = request.model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? request.model
@@ -156,11 +197,7 @@ private extension GeminiStreamingService {
             throw URLError(.badURL)
         }
 
-        let body: [String: Any] = [
-            "contents": [
-                ["parts": [["text": prompt]]]
-            ]
-        ]
+        let body = geminiRequestBody(prompt: prompt, request: request, images: images)
 
         var requestObject = URLRequest(url: url)
         requestObject.httpMethod = "POST"
@@ -203,22 +240,54 @@ private extension GeminiStreamingService {
         continuation.finish()
     }
 
+    static func geminiRequestBody(
+        prompt: String,
+        request: AIRequest,
+        images: [ImageInput]
+    ) -> [String: Any] {
+        var parts: [[String: Any]] = [["text": prompt]]
+        parts.append(
+            contentsOf: images.map { image in
+                [
+                    "inline_data": [
+                        "mime_type": image.mimeType,
+                        "data": image.base64
+                    ]
+                ]
+            }
+        )
+
+        var body: [String: Any] = [
+            "contents": [
+                [
+                    "role": "user",
+                    "parts": parts
+                ]
+            ]
+        ]
+
+        if !request.systemPrompt.isEmpty {
+            body["system_instruction"] = [
+                "parts": [
+                    ["text": request.systemPrompt]
+                ]
+            ]
+        }
+
+        return body
+    }
+
     static func streamOpenAICompatible(
         prompt: String,
         request: AIRequest,
+        images: [ImageInput],
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
         guard let url = URL(string: request.baseURL) else {
             throw URLError(.badURL)
         }
 
-        let body: [String: Any] = [
-            "model": request.model,
-            "messages": [
-                ["role": "user", "content": prompt]
-            ],
-            "stream": true
-        ]
+        let body = openAICompatibleRequestBody(prompt: prompt, request: request, images: images)
 
         var requestObject = URLRequest(url: url)
         requestObject.httpMethod = "POST"
@@ -275,6 +344,62 @@ private extension GeminiStreamingService {
         }
 
         continuation.finish()
+    }
+
+    static func openAICompatibleRequestBody(
+        prompt: String,
+        request: AIRequest,
+        images: [ImageInput]
+    ) -> [String: Any] {
+        var messages: [[String: Any]] = []
+
+        if !request.systemPrompt.isEmpty {
+            messages.append(
+                [
+                    "role": "system",
+                    "content": request.systemPrompt
+                ]
+            )
+        }
+
+        if images.isEmpty {
+            messages.append(
+                [
+                    "role": "user",
+                    "content": prompt
+                ]
+            )
+        } else {
+            var content: [[String: Any]] = [
+                [
+                    "type": "text",
+                    "text": prompt
+                ]
+            ]
+            content.append(
+                contentsOf: images.map { image in
+                    [
+                        "type": "image_url",
+                        "image_url": [
+                            "url": "data:\(image.mimeType);base64,\(image.base64)"
+                        ]
+                    ]
+                }
+            )
+
+            messages.append(
+                [
+                    "role": "user",
+                    "content": content
+                ]
+            )
+        }
+
+        return [
+            "model": request.model,
+            "messages": messages,
+            "stream": true
+        ]
     }
 
     static func extractOpenAIContent(rawJSON: String) -> String {

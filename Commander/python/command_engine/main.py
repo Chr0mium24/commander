@@ -15,7 +15,8 @@ def _handle_payload(raw_payload: str) -> dict[str, Any]:
     payload = json.loads(raw_payload)
     query = str(payload.get("query", ""))
     settings = payload.get("settings", {}) or {}
-    return dispatch(query, settings)
+    attachments = payload.get("attachments", []) or []
+    return dispatch(query, settings, attachments)
 
 
 def _write_response(response: dict[str, Any], *, stdio: bool) -> None:

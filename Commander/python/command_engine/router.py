@@ -9,7 +9,7 @@ from .runtime import EngineContext
 from .utils import base_response, coalesce
 
 
-def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
+def dispatch(query: str, settings: dict[str, Any], attachments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     response = base_response()
     response["history_input"] = query
 
@@ -40,6 +40,7 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
     context = EngineContext(
         query=query,
         settings=effective_settings,
+        attachments=[dict(item) for item in (attachments or []) if isinstance(item, dict)],
         aliases={"py": alias_py, "def": alias_def, "ask": alias_ask, "ser": alias_ser},
         python_path=python_path,
         script_dir=script_dir,
@@ -76,6 +77,7 @@ def dispatch(query: str, settings: dict[str, Any]) -> dict[str, Any]:
     context.runtime_metadata["skipped_plugins"] = (
         builtin_report["skipped"] + external_report["skipped"]
     )
+    context.runtime_metadata["attachments"] = [dict(item) for item in context.attachments]
 
     handled = registry.dispatch(context, trimmed)
     if not handled and not response["output"]:

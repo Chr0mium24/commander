@@ -2,12 +2,11 @@ import SwiftUI
 import MarkdownUI
 import Splash
 import AppKit
+internal import UniformTypeIdentifiers
+import QuickLookUI
 import WebKit
 
 struct ContentView: View {
-    private let compactWindowHeight: CGFloat = 40
-    private let expandedWindowMinimumHeight: CGFloat = 220
-
     private enum InputFocusField: Hashable {
         case singleLine
         case multiLine
@@ -30,6 +29,25 @@ struct ContentView: View {
     private let singleLinePlaceholder = "Type 'help'..."
     private let multilinePlaceholderTop: CGFloat = 4
     private let multilinePlaceholderLeading: CGFloat = 4
+
+    private var attachmentStripHeight: CGFloat {
+        appState.inputAttachments.isEmpty ? 0 : 40
+    }
+
+    private var multilineEditorHeight: CGFloat {
+        appState.inputAttachments.isEmpty ? 96 : 132
+    }
+
+    private var compactWindowHeight: CGFloat {
+        if multilineInput {
+            return multilineEditorHeight + attachmentStripHeight + 28
+        }
+        return 40 + attachmentStripHeight
+    }
+
+    private var expandedWindowMinimumHeight: CGFloat {
+        220 + attachmentStripHeight + (multilineInput ? 40 : 0)
+    }
 
     private var processMaxHeight: CGFloat {
         420
@@ -172,6 +190,9 @@ struct ContentView: View {
             }
             syncWindowHeightWithState(animated: true)
         }
+        .onChange(of: multilineInput) { _, _ in
+            syncWindowHeightWithState(animated: true)
+        }
         .onChange(of: appState.shouldOpenSettings) { _, newValue in
             if newValue {
                 openSettings()
@@ -183,102 +204,163 @@ struct ContentView: View {
                 showOutputTools = false
             }
         }
+        .onChange(of: appState.inputAttachments.count) { _, _ in
+            syncWindowHeightWithState(animated: true)
+        }
     }
 
     private var inputSection: some View {
-        HStack(alignment: multilineInput ? .top : .center, spacing: 10) {
-            Image(systemName: "terminal")
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: appState.inputAttachments.isEmpty ? 0 : 8) {
+            HStack(alignment: multilineInput ? .top : .center, spacing: 10) {
+                Image(systemName: "terminal")
+                    .foregroundColor(.secondary)
 
-            if multilineInput {
-                ZStack(alignment: .topLeading) {
-                    if inputText.isEmpty {
-                        Text(singleLinePlaceholder)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, multilinePlaceholderTop)
-                            .padding(.leading, multilinePlaceholderLeading)
+                if multilineInput {
+                    ZStack(alignment: .topLeading) {
+                        if inputText.isEmpty {
+                            Text(singleLinePlaceholder)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, multilinePlaceholderTop)
+                                .padding(.leading, multilinePlaceholderLeading)
+                        }
+
+                        TextEditor(text: $inputText)
+                            .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .focused($focusedInput, equals: .multiLine)
+                            .onKeyPress(phases: [.down]) { keyPress in
+                                handleInputPasteKeyPress(keyPress)
+                            }
+                            .onExitCommand {
+                                handleMultilineExitCommand()
+                            }
                     }
-
-                    TextEditor(text: $inputText)
+                    .frame(minHeight: multilineEditorHeight, maxHeight: multilineEditorHeight)
+                } else {
+                    TextField(singleLinePlaceholder, text: $inputText)
+                        .textFieldStyle(.plain)
                         .font(.body)
-                        .scrollContentBackground(.hidden)
-                        .focused($focusedInput, equals: .multiLine)
+                        .frame(height: 22)
+                        .focused($focusedInput, equals: .singleLine)
+                        .onKeyPress(phases: [.down]) { keyPress in
+                            handleInputPasteKeyPress(keyPress)
+                        }
+                        .onKeyPress(.return, phases: [.down]) { keyPress in
+                            if keyPress.modifiers.contains(.shift) {
+                                enterMultilineModeWithNewline()
+                                return .handled
+                            }
+                            return .ignored
+                        }
+                        .onSubmit {
+                            submitInput()
+                        }
+                        .onMoveCommand { direction in
+                            switch direction {
+                            case .up:
+                                browseInputHistoryBackward()
+                            case .down:
+                                browseInputHistoryForward()
+                            default:
+                                break
+                            }
+                        }
                         .onExitCommand {
-                            handleMultilineExitCommand()
+                            handleExitCommand()
                         }
                 }
-                .frame(minHeight: 58, maxHeight: 110)
-            } else {
-                TextField(singleLinePlaceholder, text: $inputText)
-                    .textFieldStyle(.plain)
-                    .font(.body)
-                    .frame(height: 22)
-                    .focused($focusedInput, equals: .singleLine)
-                    .onKeyPress(.return, phases: [.down]) { keyPress in
-                        if keyPress.modifiers.contains(.shift) {
-                            enterMultilineModeWithNewline()
-                            return .handled
-                        }
-                        return .ignored
+
+                HStack(spacing: 8) {
+                    Button(action: {
+                        pickInputFiles()
+                    }) {
+                        Image(systemName: appState.inputAttachments.isEmpty ? "doc.badge.plus" : "paperclip")
                     }
-                    .onSubmit {
+                    .buttonStyle(.borderless)
+                    .help("Attach files")
+
+                    Button(action: {
+                        if multilineInput {
+                            multilineInput = false
+                            inputText = inputText
+                                .replacingOccurrences(of: "\r\n", with: " ")
+                                .replacingOccurrences(of: "\n", with: " ")
+                        } else {
+                            multilineInput = true
+                        }
+                        focusCurrentInput()
+                    }) {
+                        Image(systemName: multilineInput ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(multilineInput ? "Switch to single-line input" : "Switch to multi-line input")
+
+                    Button(action: {
                         submitInput()
+                    }) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title3)
                     }
-                    .onMoveCommand { direction in
-                        switch direction {
-                        case .up:
-                            browseInputHistoryBackward()
-                        case .down:
-                            browseInputHistoryForward()
-                        default:
-                            break
+                    .buttonStyle(.borderless)
+                    .help(multilineInput ? "Send (Cmd+Enter)" : "Send")
+                    .keyboardShortcut(.return, modifiers: [.command])
+                }
+
+                if appState.isLoading {
+                    ProgressView().controlSize(.small)
+                }
+
+                if appState.isLoading {
+                    Button(action: {
+                        appState.stopCurrentTask()
+                    }) {
+                        Image(systemName: "stop.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Stop current task")
+                }
+            }
+
+            if !appState.inputAttachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(appState.inputAttachments) { attachment in
+                            HStack(spacing: 6) {
+                                Image(systemName: attachment.kind == .image ? "photo" : "doc")
+                                    .foregroundStyle(.secondary)
+                                Text(attachment.filename)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Button(action: {
+                                    appState.removeInputAttachment(path: attachment.path)
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                appState.selectedAttachmentPath == attachment.path
+                                    ? Color.accentColor.opacity(0.22)
+                                    : Color.primary.opacity(0.08)
+                            )
+                            .clipShape(Capsule())
+                            .onTapGesture {
+                                appState.selectAttachment(path: attachment.path)
+                                AttachmentQuickLookController.shared.preview(path: attachment.path)
+                            }
                         }
+
+                        Button("Clear") {
+                            appState.clearInputAttachments()
+                        }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
                     }
-                    .onExitCommand {
-                        handleExitCommand()
-                    }
-            }
-
-            HStack(spacing: 8) {
-                Button(action: {
-                    if multilineInput {
-                        multilineInput = false
-                        inputText = inputText
-                            .replacingOccurrences(of: "\r\n", with: " ")
-                            .replacingOccurrences(of: "\n", with: " ")
-                    } else {
-                        multilineInput = true
-                    }
-                    focusCurrentInput()
-                }) {
-                    Image(systemName: multilineInput ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
                 }
-                .buttonStyle(.borderless)
-                .help(multilineInput ? "Switch to single-line input" : "Switch to multi-line input")
-
-                Button(action: {
-                    submitInput()
-                }) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title3)
-                }
-                .buttonStyle(.borderless)
-                .help(multilineInput ? "Send (Cmd+Enter)" : "Send")
-                .keyboardShortcut(.return, modifiers: [.command])
-            }
-
-            if appState.isLoading {
-                ProgressView().controlSize(.small)
-            }
-
-            if appState.isLoading {
-                Button(action: {
-                    appState.stopCurrentTask()
-                }) {
-                    Image(systemName: "stop.circle.fill")
-                }
-                .buttonStyle(.borderless)
-                .help("Stop current task")
             }
         }
         .padding(.horizontal, 12)
@@ -429,15 +511,109 @@ struct ContentView: View {
                 .replacingOccurrences(of: "\r\n", with: " ")
                 .replacingOccurrences(of: "\n", with: " ")
                 .replacingOccurrences(of: "\r", with: " ")
+        let trimmedNormalized = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedInput = trimmedNormalized.isEmpty && !appState.imageAttachmentPathsForAI().isEmpty
+            ? "Describe the attached image."
+            : normalized
 
-        appState.query = normalized
-        inputText = normalized
+        appState.query = resolvedInput
+        inputText = resolvedInput
         inputHistoryCursor = nil
         inputHistoryDraft = ""
         appState.clearCommandHistoryNavigation()
         appState.executeCommand()
     }
-    
+
+    private func pickInputFiles() {
+        let panel = NSOpenPanel()
+        panel.title = "Attach Files"
+        panel.message = "Selected files will be available to commands and plugins. Image files are also sent with built-in AI requests."
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+
+        if panel.runModal() == .OK {
+            appState.addInputAttachments(panel.urls.compactMap(makeInputAttachment))
+        }
+    }
+
+    private func handleInputPasteKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        let characters = keyPress.characters.lowercased()
+
+        if keyPress.modifiers.contains(.command), characters == "v" {
+            return pasteAttachmentsFromPasteboard() ? .handled : .ignored
+        }
+
+        return .ignored
+    }
+
+    private func pasteAttachmentsFromPasteboard() -> Bool {
+        let pasteboard = NSPasteboard.general
+        var attachments: [InputAttachment] = []
+
+        if let fileURLs = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] {
+            attachments.append(contentsOf: fileURLs.compactMap(makeInputAttachment))
+        }
+
+        if attachments.isEmpty,
+           let image = NSImage(pasteboard: pasteboard),
+           let tempURL = writePastedImageToTemporaryFile(image) {
+            attachments.append(
+                InputAttachment(
+                    path: tempURL.path,
+                    kind: .image,
+                    mimeType: "image/png"
+                )
+            )
+        }
+
+        guard !attachments.isEmpty else { return false }
+        appState.addInputAttachments(attachments)
+        focusCurrentInput()
+        return true
+    }
+
+    private func makeInputAttachment(url: URL) -> InputAttachment? {
+        let resolvedURL = url.standardizedFileURL
+        let path = resolvedURL.path
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+
+        let mimeType = inferMimeType(for: resolvedURL)
+        let kind: InputAttachmentKind = mimeType.hasPrefix("image/") ? .image : .file
+        return InputAttachment(path: path, kind: kind, mimeType: mimeType)
+    }
+
+    private func inferMimeType(for url: URL) -> String {
+        if let type = UTType(filenameExtension: url.pathExtension.lowercased()),
+           let mimeType = type.preferredMIMEType {
+            return mimeType
+        }
+        return "application/octet-stream"
+    }
+
+    private func writePastedImageToTemporaryFile(_ image: NSImage) -> URL? {
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:])
+        else {
+            return nil
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CommanderAttachments", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("png")
+            try pngData.write(to: url)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
     private func handleExitCommand() {
         if !visibleEmbeddedProgressSessions.isEmpty {
             if multilineInput {
@@ -736,6 +912,29 @@ struct ContentView: View {
         default:
             return "Ready"
         }
+    }
+}
+
+private final class AttachmentQuickLookController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    static let shared = AttachmentQuickLookController()
+
+    private var items: [NSURL] = []
+
+    func preview(path: String) {
+        items = [NSURL(fileURLWithPath: path)]
+        guard let panel = QLPreviewPanel.shared() else { return }
+        panel.dataSource = self
+        panel.delegate = self
+        panel.reloadData()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        items.count
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        items[index]
     }
 }
 

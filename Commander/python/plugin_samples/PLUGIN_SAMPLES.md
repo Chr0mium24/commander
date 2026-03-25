@@ -9,3 +9,12 @@ Commander Plugin Samples
 `set ai_model DeepSeek-V3.2`
 4. Use:
 `edge hello`
+
+Plugin attachment interface
+
+- `context.attachments` is a list of dicts with:
+  - `path`
+  - `name`
+  - `kind` (`image` or `file`)
+  - `mime_type`
+- Files selected from the input button or pasted with `Command+V` are exposed here.

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+from pathlib import Path
 
 import requests
 
@@ -38,7 +40,7 @@ def handle_edge_chat(context, content: str):
 
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": build_content(prompt, context.attachments)}],
     }
 
     try:
@@ -88,3 +90,30 @@ def extract_content(payload: dict) -> str:
         return payload["output"]
 
     return ""
+
+
+def build_content(prompt: str, attachments: list[dict]) -> str | list[dict]:
+    image_items: list[dict] = []
+    for item in attachments:
+        path = str(item.get("path") or "")
+        mime_type = str(item.get("mime_type") or "application/octet-stream")
+        kind = str(item.get("kind") or "")
+        if kind != "image" or not path:
+            continue
+
+        file_path = Path(path)
+        if not file_path.is_file():
+            continue
+
+        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+        image_items.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+            }
+        )
+
+    if not image_items:
+        return prompt
+
+    return [{"type": "text", "text": prompt}, *image_items]

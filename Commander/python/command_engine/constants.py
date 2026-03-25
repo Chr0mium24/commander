@@ -21,6 +21,7 @@ SETTING_KEY_MAP = {
     "ai_base_url": ("aiBaseURL", "string"),
     "ai_api_key": ("aiApiKey", "string"),
     "ai_model": ("aiModel", "string"),
+    "ai_system_prompt": ("aiSystemPrompt", "string"),
     "plugin_dir": ("pluginDirectory", "string"),
     "enabled_plugins": ("enabledPlugins", "string"),
     "disabled_plugins": ("disabledPlugins", "string"),
@@ -47,6 +48,7 @@ SETTING_SCHEMA = [
     {"key": "aiBaseURL", "type": "string", "label": "AI Base URL", "group": "ai"},
     {"key": "aiApiKey", "type": "secret", "label": "AI API Key", "group": "ai"},
     {"key": "aiModel", "type": "string", "label": "AI Model", "group": "ai"},
+    {"key": "aiSystemPrompt", "type": "string", "label": "AI System Prompt", "group": "ai"},
     {"key": "historyLimit", "type": "int", "label": "History Limit", "group": "general"},
     {"key": "autoCopy", "type": "bool", "label": "Auto Copy", "group": "general"},
     {
@@ -74,6 +76,7 @@ DEFAULT_SETTINGS = {
     "aiBaseURL": "",
     "aiApiKey": "",
     "aiModel": "",
+    "aiSystemPrompt": "",
     "historyLimit": 50,
     "autoCopy": False,
     "streamingMarkdownCommitInterval": 50,

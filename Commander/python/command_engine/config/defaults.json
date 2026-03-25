@@ -13,6 +13,7 @@
   "aiBaseURL": "",
   "aiApiKey": "",
   "aiModel": "",
+  "aiSystemPrompt": "",
   "historyLimit": 50,
   "autoCopy": false
 }

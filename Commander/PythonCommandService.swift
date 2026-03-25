@@ -17,6 +17,7 @@ struct CommandEngineSettings: Encodable {
     let aiBaseURL: String
     let aiApiKey: String
     let aiModel: String
+    let aiSystemPrompt: String
 
     let historyLimit: Int
     let autoCopy: Bool
@@ -38,6 +39,7 @@ struct CommandEngineSettings: Encodable {
             aiBaseURL: UserDefaults.standard.string(forKey: AppStorageKey.aiBaseURL) ?? "",
             aiApiKey: UserDefaults.standard.string(forKey: AppStorageKey.aiApiKey) ?? "",
             aiModel: UserDefaults.standard.string(forKey: AppStorageKey.aiModel) ?? "",
+            aiSystemPrompt: UserDefaults.standard.string(forKey: AppStorageKey.aiSystemPrompt) ?? "",
             historyLimit: UserDefaults.standard.integer(forKey: AppStorageKey.historyLimit),
             autoCopy: UserDefaults.standard.bool(forKey: AppStorageKey.autoCopy),
             streamingMarkdownCommitInterval: UserDefaults.standard.integer(forKey: AppStorageKey.streamingMarkdownCommitInterval)
@@ -48,6 +50,21 @@ struct CommandEngineSettings: Encodable {
 private struct CommandEngineRequest: Encodable {
     let query: String
     let settings: CommandEngineSettings
+    let attachments: [CommandEngineAttachment]
+}
+
+private struct CommandEngineAttachment: Encodable {
+    let path: String
+    let name: String
+    let kind: String
+    let mimeType: String
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case name
+        case kind
+        case mimeType = "mime_type"
+    }
 }
 
 struct CommandEngineSettingUpdate: Decodable {
@@ -122,6 +139,7 @@ struct CommandEngineAIRequest {
     let apiKey: String
     let model: String
     let proxyURL: String
+    let systemPrompt: String
 }
 
 struct CommandEngineResponse: Decodable {
@@ -135,6 +153,7 @@ struct CommandEngineResponse: Decodable {
     let aiRequestAPIKey: String
     let aiRequestModel: String
     let aiRequestProxyURL: String
+    let aiRequestSystemPrompt: String
     let openPanel: Bool
     let panelPresentation: String
     let panelTitle: String
@@ -167,6 +186,7 @@ struct CommandEngineResponse: Decodable {
         case aiRequestAPIKey = "ai_request_api_key"
         case aiRequestModel = "ai_request_model"
         case aiRequestProxyURL = "ai_request_proxy_url"
+        case aiRequestSystemPrompt = "ai_request_system_prompt"
         case openPanel = "open_panel"
         case panelPresentation = "panel_presentation"
         case panelTitle = "panel_title"
@@ -201,6 +221,7 @@ struct CommandEngineResponse: Decodable {
         aiRequestAPIKey = try container.decodeIfPresent(String.self, forKey: .aiRequestAPIKey) ?? ""
         aiRequestModel = try container.decodeIfPresent(String.self, forKey: .aiRequestModel) ?? ""
         aiRequestProxyURL = try container.decodeIfPresent(String.self, forKey: .aiRequestProxyURL) ?? ""
+        aiRequestSystemPrompt = try container.decodeIfPresent(String.self, forKey: .aiRequestSystemPrompt) ?? ""
         openPanel = try container.decodeIfPresent(Bool.self, forKey: .openPanel) ?? false
         panelPresentation = try container.decodeIfPresent(String.self, forKey: .panelPresentation) ?? ""
         panelTitle = try container.decodeIfPresent(String.self, forKey: .panelTitle) ?? ""
@@ -235,6 +256,7 @@ struct CommandEngineResponse: Decodable {
             aiRequestAPIKey: "",
             aiRequestModel: "",
             aiRequestProxyURL: "",
+            aiRequestSystemPrompt: "",
             openPanel: false,
             panelPresentation: "",
             panelTitle: "",
@@ -269,6 +291,7 @@ struct CommandEngineResponse: Decodable {
         aiRequestAPIKey: String,
         aiRequestModel: String,
         aiRequestProxyURL: String,
+        aiRequestSystemPrompt: String,
         openPanel: Bool,
         panelPresentation: String,
         panelTitle: String,
@@ -300,6 +323,7 @@ struct CommandEngineResponse: Decodable {
         self.aiRequestAPIKey = aiRequestAPIKey
         self.aiRequestModel = aiRequestModel
         self.aiRequestProxyURL = aiRequestProxyURL
+        self.aiRequestSystemPrompt = aiRequestSystemPrompt
         self.openPanel = openPanel
         self.panelPresentation = panelPresentation
         self.panelTitle = panelTitle
@@ -329,7 +353,8 @@ struct CommandEngineResponse: Decodable {
             baseURL: aiRequestBaseURL,
             apiKey: aiRequestAPIKey,
             model: aiRequestModel,
-            proxyURL: aiRequestProxyURL
+            proxyURL: aiRequestProxyURL,
+            systemPrompt: aiRequestSystemPrompt
         )
     }
 }
@@ -337,12 +362,27 @@ struct CommandEngineResponse: Decodable {
 struct PythonCommandService {
     fileprivate nonisolated static let defaultInterpreter = "/usr/bin/python3"
 
-    static func execute(query: String, settings: CommandEngineSettings) async -> CommandEngineResponse {
+    static func execute(
+        query: String,
+        settings: CommandEngineSettings,
+        attachments: [InputAttachment] = []
+    ) async -> CommandEngineResponse {
         guard let scriptPath = resolveEngineScriptPath() else {
             return .failure("Command engine script not found: python/commander_engine.py")
         }
 
-        let request = CommandEngineRequest(query: query, settings: settings)
+        let request = CommandEngineRequest(
+            query: query,
+            settings: settings,
+            attachments: attachments.map {
+                CommandEngineAttachment(
+                    path: $0.path,
+                    name: $0.filename,
+                    kind: $0.kind.rawValue,
+                    mimeType: $0.mimeType
+                )
+            }
+        )
         guard
             let requestData = try? JSONEncoder().encode(request),
             let payload = String(data: requestData, encoding: .utf8)

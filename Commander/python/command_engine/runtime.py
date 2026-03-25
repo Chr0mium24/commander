@@ -8,6 +8,7 @@ from typing import Any
 class EngineContext:
     query: str
     settings: dict[str, Any]
+    attachments: list[dict[str, Any]]
     aliases: dict[str, str]
     python_path: str
     script_dir: str
