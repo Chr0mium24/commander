@@ -19,7 +19,6 @@ struct ContentView: View {
     @State private var inputHistoryCursor: Int?
     @State private var inputHistoryDraft: String = ""
     @State private var isApplyingInputHistoryNavigation = false
-    @State private var showOutputTools = false
     @State private var processBaseHeight: CGFloat = 190
     @GestureState private var processDragTranslation: CGFloat = 0
     @Environment(\.openSettings) private var openSettings
@@ -67,10 +66,6 @@ struct ContentView: View {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    private var detectedCodeBlocks: [DetectedCodeBlock] {
-        MarkdownCodeBlockExtractor.extract(from: appState.resultText)
-    }
-
     private var sanitizedResultText: String {
         let scalars = appState.resultText.unicodeScalars.filter { scalar in
             if scalar == "\n" || scalar == "\r" || scalar == "\t" {
@@ -94,7 +89,7 @@ struct ContentView: View {
         hasVisibleHistory || !visibleEmbeddedProgressSessions.isEmpty || appState.isLoading || hasVisibleResultText
     }
 
-    private var shouldShowOutputTools: Bool {
+    private var shouldShowCopyMarkdownButton: Bool {
         appState.isAIResponse && !appState.isLoading && !appState.resultText.isEmpty
     }
 
@@ -197,11 +192,6 @@ struct ContentView: View {
             if newValue {
                 openSettings()
                 appState.shouldOpenSettings = false
-            }
-        }
-        .onChange(of: appState.isLoading) { _, isLoading in
-            if isLoading {
-                showOutputTools = false
             }
         }
         .onChange(of: appState.inputAttachments.count) { _, _ in
@@ -419,43 +409,16 @@ struct ContentView: View {
                                     }
                                 }
 
-                                if shouldShowOutputTools {
-                                    DisclosureGroup(isExpanded: $showOutputTools) {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            HStack(spacing: 8) {
-                                                Button("Copy Markdown") {
-                                                    appState.copyToClipboard(appState.resultText)
-                                                }
-                                                .font(.caption)
-                                                .buttonStyle(.borderedProminent)
-
-                                                Button("Copy Plain Text") {
-                                                    if let attributed = try? AttributedString(markdown: appState.resultText) {
-                                                        appState.copyToClipboard(String(attributed.characters))
-                                                    } else {
-                                                        appState.copyToClipboard(appState.resultText)
-                                                    }
-                                                }
-                                                .font(.caption)
-                                                .buttonStyle(.bordered)
-                                            }
-
-                                            if let firstRunnable = detectedCodeBlocks.first(where: { isRunnableCodeLanguage($0.language) }) {
-                                                Button("Run First Code") {
-                                                    appState.runGeneratedCode(
-                                                        language: firstRunnable.language,
-                                                        code: firstRunnable.code
-                                                    )
-                                                }
-                                                .font(.caption)
-                                                .buttonStyle(.borderedProminent)
-                                            }
+                                if shouldShowCopyMarkdownButton {
+                                    HStack {
+                                        Spacer()
+                                        Button(action: {
+                                            appState.copyToClipboard(appState.resultText)
+                                        }) {
+                                            Image(systemName: "doc.on.doc")
                                         }
-                                        .padding(.top, 6)
-                                    } label: {
-                                        Text("Tools")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                        .buttonStyle(.borderless)
+                                        .help("Copy Markdown")
                                     }
                                 }
                             }
