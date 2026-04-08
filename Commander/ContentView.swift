@@ -5,6 +5,12 @@ import AppKit
 internal import UniformTypeIdentifiers
 import QuickLookUI
 import WebKit
+import OSLog
+
+private let markdownRenderLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "cr.commander",
+    category: "MarkdownRender"
+)
 
 struct ContentView: View {
     private enum InputFocusField: Hashable {
@@ -959,6 +965,11 @@ private struct MarkdownRenderSegment: Identifiable {
 }
 
 private enum MarkdownFormulaExtractor {
+    private enum InlineMathSegment {
+        case markdown(String)
+        case math(String)
+    }
+
     static func extract(from markdown: String) -> [MarkdownRenderSegment] {
         guard markdown.contains("$$") else {
             return [MarkdownRenderSegment(id: 0, kind: .markdown(markdown))]
@@ -1001,7 +1012,18 @@ private enum MarkdownFormulaExtractor {
             }
 
             if !inCodeFence {
-                if !inFormula, appendInlineBlockMathSegments(from: line, into: &segments, nextID: &nextID, flushMarkdown: appendMarkdownIfNeeded) {
+                if !inFormula, let inlineSegments = inlineBlockMathSegments(from: line) {
+                    appendMarkdownIfNeeded()
+                    for segment in inlineSegments {
+                        switch segment {
+                        case .markdown(let text):
+                            segments.append(MarkdownRenderSegment(id: nextID, kind: .markdown(text)))
+                            nextID += 1
+                        case .math(let formula):
+                            segments.append(MarkdownRenderSegment(id: nextID, kind: .math(formula)))
+                            nextID += 1
+                        }
+                    }
                     continue
                 }
 
@@ -1037,6 +1059,7 @@ private enum MarkdownFormulaExtractor {
         }
 
         if inFormula {
+            markdownRenderLogger.warning("Unclosed block math delimiter detected while extracting markdown formula segments")
             markdownLines.append("$$")
             markdownLines.append(contentsOf: formulaLines)
         }
@@ -1048,52 +1071,38 @@ private enum MarkdownFormulaExtractor {
         return segments
     }
 
-    private static func appendInlineBlockMathSegments(
-        from line: String,
-        into segments: inout [MarkdownRenderSegment],
-        nextID: inout Int,
-        flushMarkdown: () -> Void
-    ) -> Bool {
-        guard line.contains("$$") else { return false }
-
+    private static func inlineBlockMathSegments(from line: String) -> [InlineMathSegment]? {
+        guard line.contains("$$") else { return nil }
         var cursor = line.startIndex
         var producedMath = false
-        var pendingMarkdown: [String] = []
-
-        func appendMarkdownSegment(_ text: String) {
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            segments.append(MarkdownRenderSegment(id: nextID, kind: .markdown(text)))
-            nextID += 1
-        }
+        var parsedSegments: [InlineMathSegment] = []
 
         while let open = line[cursor...].range(of: "$$") {
             let prefix = String(line[cursor..<open.lowerBound])
-            pendingMarkdown.append(prefix)
+            if !prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parsedSegments.append(.markdown(prefix))
+            }
 
             guard let close = line[open.upperBound...].range(of: "$$") else {
-                return false
+                markdownRenderLogger.warning("Inline block math has opening '$$' without closing delimiter; fallback to plain markdown line")
+                return nil
             }
 
             let formula = String(line[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             if !formula.isEmpty {
-                flushMarkdown()
-                if !pendingMarkdown.isEmpty {
-                    appendMarkdownSegment(pendingMarkdown.joined())
-                    pendingMarkdown.removeAll(keepingCapacity: true)
-                }
-                segments.append(MarkdownRenderSegment(id: nextID, kind: .math(formula)))
-                nextID += 1
+                parsedSegments.append(.math(formula))
                 producedMath = true
             }
 
             cursor = close.upperBound
         }
 
-        pendingMarkdown.append(String(line[cursor...]))
-        if producedMath {
-            appendMarkdownSegment(pendingMarkdown.joined())
+        let suffix = String(line[cursor...])
+        if !suffix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parsedSegments.append(.markdown(suffix))
         }
-        return producedMath
+
+        return producedMath ? parsedSegments : nil
     }
 }
 
@@ -1372,10 +1381,27 @@ private struct MathFormulaWebView: NSViewRepresentable {
             }
         }
 
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            markdownRenderLogger.error("MathFormulaWebView navigation failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            markdownRenderLogger.error("MathFormulaWebView provisional navigation failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            markdownRenderLogger.error("MathFormulaWebView web content process terminated; reloading")
+            webView.reload()
+        }
+
         private func updateHeight(for webView: WKWebView) {
             let script = "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.getElementById('math')?.scrollHeight || 0)"
-            webView.evaluateJavaScript(script) { [weak self] result, _ in
+            webView.evaluateJavaScript(script) { [weak self] result, error in
                 guard let self else { return }
+                if let error {
+                    markdownRenderLogger.error("MathFormulaWebView evaluateJavaScript failed: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
                 guard let number = result as? NSNumber else { return }
                 let newHeight = CGFloat(truncating: number) + 2
                 guard newHeight.isFinite, newHeight > 0 else { return }
@@ -1476,10 +1502,27 @@ private struct InlineMathWebView: NSViewRepresentable {
             }
         }
 
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            markdownRenderLogger.error("InlineMathWebView navigation failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            markdownRenderLogger.error("InlineMathWebView provisional navigation failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            markdownRenderLogger.error("InlineMathWebView web content process terminated; reloading")
+            webView.reload()
+        }
+
         private func updateHeight(for webView: WKWebView) {
             let script = "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.getElementById('content')?.scrollHeight || 0)"
-            webView.evaluateJavaScript(script) { [weak self] result, _ in
+            webView.evaluateJavaScript(script) { [weak self] result, error in
                 guard let self else { return }
+                if let error {
+                    markdownRenderLogger.error("InlineMathWebView evaluateJavaScript failed: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
                 guard let number = result as? NSNumber else { return }
                 let newHeight = CGFloat(truncating: number) + 2
                 guard newHeight.isFinite, newHeight > 0 else { return }
