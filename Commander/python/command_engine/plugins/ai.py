@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import shlex
 from requests import RequestException
 from requests import get
 from requests.compat import urlparse, urlunparse
 from requests.exceptions import HTTPError
 
-from ..config import update_user_config
 from ..prompts import dictionary_prompt, is_single_word
 from ..runtime import EngineContext
 from ..plugin_registry import CommandRegistry
@@ -25,10 +23,6 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
         [
             "`ai` or `ai status` show active provider/model config",
             "`ai models` list models from the configured OpenAI-compatible endpoint",
-            "`ai model` list saved model presets",
-            "`ai model save <name> [model]` save a preset",
-            "`ai model use <name>` switch to a saved preset",
-            "`ai model rm <name>` delete a saved preset",
             "`ai <prompt>` force AI mode",
             f"`{alias_def} <word>` force dictionary mode",
             f"`{alias_ask} <question>` force AI mode alias",
@@ -63,17 +57,8 @@ def handle_ai(context: EngineContext, content: str) -> None:
         context.response["output"] = render_ai_status(context)
         context.response["should_save_history"] = False
         return
-
-    parts = payload.split(maxsplit=1)
-    head = parts[0].lower() if parts else ""
-    tail = parts[1] if len(parts) > 1 else ""
-
-    if head == "models":
+    if payload.lower() == "models":
         context.response["output"] = render_openai_models(context.settings)
-        context.response["should_save_history"] = False
-        return
-    if head == "model":
-        context.response["output"] = handle_model_preset_command(context, tail)
         context.response["should_save_history"] = False
         return
 
@@ -224,144 +209,6 @@ def render_ai_status(context: EngineContext) -> str:
                 "- `ai models`",
             ]
         )
-    return "\n".join(lines)
-
-
-def handle_model_preset_command(context: EngineContext, content: str) -> str:
-    presets = load_model_presets(context.settings)
-    current_model = str(context.settings.get("aiModel") or "").strip()
-
-    stripped = content.strip()
-    if not stripped:
-        return render_model_presets(presets, current_model)
-
-    try:
-        tokens = shlex.split(stripped)
-    except ValueError as exc:
-        return f"Invalid syntax: {exc}"
-
-    if not tokens:
-        return render_model_presets(presets, current_model)
-
-    action = tokens[0].lower()
-    if action in {"list", "ls"}:
-        return render_model_presets(presets, current_model)
-
-    if action in {"save", "add"}:
-        if len(tokens) < 2:
-            return "Usage: `ai model save <name> [model]`"
-        name = normalize_preset_name(tokens[1])
-        if not name:
-            return "Preset name cannot be empty."
-        model = " ".join(tokens[2:]).strip() if len(tokens) > 2 else current_model
-        if not model:
-            return "Model cannot be empty. Use `ai model save <name> <model>`."
-        presets[name] = model
-        save_error = save_model_presets(presets)
-        if save_error is not None:
-            return save_error
-        return f"Saved preset `{name}` -> `{model}`."
-
-    if action in {"use", "switch"}:
-        if len(tokens) < 2:
-            return "Usage: `ai model use <name>`"
-        name = normalize_preset_name(tokens[1])
-        model = presets.get(name)
-        if not model:
-            return f"Preset `{name}` not found."
-        context.response["setting_updates"] = [
-            {"key": "aiModel", "value": model, "value_type": "string"}
-        ]
-        try:
-            update_user_config("aiModel", model)
-            return f"Switched model to `{model}` via preset `{name}`."
-        except OSError as exc:
-            return f"Switched model to `{model}` in memory; failed saving: {exc}"
-
-    if action in {"rm", "del", "delete", "remove"}:
-        if len(tokens) < 2:
-            return "Usage: `ai model rm <name>`"
-        name = normalize_preset_name(tokens[1])
-        if name not in presets:
-            return f"Preset `{name}` not found."
-        removed = presets.pop(name)
-        save_error = save_model_presets(presets)
-        if save_error is not None:
-            return save_error
-        return f"Removed preset `{name}` (`{removed}`)."
-
-    return (
-        "Unknown model action. Use one of:\n"
-        "- `ai model`\n"
-        "- `ai model save <name> [model]`\n"
-        "- `ai model use <name>`\n"
-        "- `ai model rm <name>`"
-    )
-
-
-def normalize_preset_name(raw: str) -> str:
-    return raw.strip().lower()
-
-
-def load_model_presets(settings: dict[str, object]) -> dict[str, str]:
-    raw = settings.get("aiModelPresets")
-    payload: object = raw
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text:
-            return {}
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return {}
-
-    if not isinstance(payload, dict):
-        return {}
-
-    presets: dict[str, str] = {}
-    for key, value in payload.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            continue
-        name = normalize_preset_name(key)
-        model = value.strip()
-        if name and model:
-            presets[name] = model
-    return presets
-
-
-def save_model_presets(presets: dict[str, str]) -> str | None:
-    normalized = {name: presets[name] for name in sorted(presets)}
-    try:
-        update_user_config("aiModelPresets", normalized)
-        return None
-    except OSError as exc:
-        return f"Failed saving model presets: {exc}"
-
-
-def render_model_presets(presets: dict[str, str], current_model: str) -> str:
-    lines = [
-        "### AI Model Presets",
-        "",
-        f"- Current: `{current_model or '(empty)'}`",
-        "",
-    ]
-
-    if not presets:
-        lines.append("- No presets saved.")
-    else:
-        for name in sorted(presets):
-            marker = " (active)" if current_model and presets[name] == current_model else ""
-            lines.append(f"- `{name}` -> `{presets[name]}`{marker}")
-
-    lines.extend(
-        [
-            "",
-            "Commands:",
-            "- `ai model save <name> [model]`",
-            "- `ai model use <name>`",
-            "- `ai model rm <name>`",
-        ]
-    )
     return "\n".join(lines)
 
 
