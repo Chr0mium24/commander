@@ -6,8 +6,6 @@
   "pythonPath": "/usr/bin/python3",
   "scriptDirectory": "",
   "pluginDirectory": "",
-  "geminiApiKey": "",
-  "geminiModel": "gemini-1.5-flash",
   "geminiProxy": "",
   "aiProvider": "",
   "aiBaseURL": "",

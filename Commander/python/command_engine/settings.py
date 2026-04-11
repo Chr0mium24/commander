@@ -208,7 +208,7 @@ def render_setting_schema(schema: list[dict[str, str]]) -> str:
     tips = [
         "",
         "Examples:",
-        "- `set get gemini_model`",
+        "- `set get ai_model`",
         "- `set ai_provider openai_compatible`",
         "- `set plugin_dir ~/Library/Application\\ Support/Commander/plugins`",
         "- `set file`",

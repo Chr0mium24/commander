@@ -27,25 +27,12 @@ struct GeminiStreamingService {
         systemPrompt: String
     ) throws -> AIRequest {
         let normalizedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let requestKind: RequestKind
-        if normalizedKind.isEmpty {
-            let normalizedProviderForInference = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let trimmedBaseURLForInference = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            if normalizedProviderForInference == "gemini" || (normalizedProviderForInference.isEmpty && trimmedBaseURLForInference.isEmpty) {
-                requestKind = .gemini
-            } else {
-                requestKind = .openAICompatible
-            }
-        } else if let parsedKind = RequestKind(rawValue: normalizedKind) {
-            requestKind = parsedKind
-        } else {
+        guard let requestKind = RequestKind(rawValue: normalizedKind) else {
             throw configurationError("AI request kind is missing or invalid. Check Python plugin output.")
         }
 
-        let normalizedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let resolvedProvider = normalizedProvider.isEmpty
-            ? (requestKind == .gemini ? "gemini" : "openai_compatible")
-            : normalizedProvider
+        _ = provider
+        let resolvedProvider = requestKind == .gemini ? "gemini" : "openai_compatible"
 
         let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,28 +42,27 @@ struct GeminiStreamingService {
 
         switch requestKind {
         case .gemini:
-            let resolvedModel = trimmedModel.isEmpty ? "gemini-1.5-flash" : trimmedModel
-            let resolvedBaseURL = trimmedBaseURL.isEmpty
-                ? "https://generativelanguage.googleapis.com"
-                : trimmedBaseURL
+            guard !trimmedBaseURL.isEmpty else {
+                throw configurationError("Please set AI Base URL in Settings.")
+            }
             guard !trimmedAPIKey.isEmpty else {
-                throw configurationError("Please set Gemini API Key in Settings.")
+                throw configurationError("Please set AI API Key in Settings.")
+            }
+            guard !trimmedModel.isEmpty else {
+                throw configurationError("Please set AI Model in Settings.")
             }
             return AIRequest(
                 kind: .gemini,
                 provider: resolvedProvider,
-                baseURL: resolvedBaseURL,
+                baseURL: trimmedBaseURL,
                 apiKey: trimmedAPIKey,
-                model: resolvedModel,
+                model: trimmedModel,
                 proxyURL: trimmedProxyURL,
                 systemPrompt: trimmedSystemPrompt
             )
 
         case .openAICompatible:
-            let resolvedBaseURL = trimmedBaseURL.isEmpty
-                ? defaultOpenAIBaseURL(for: resolvedProvider)
-                : trimmedBaseURL
-            guard !resolvedBaseURL.isEmpty else {
+            guard !trimmedBaseURL.isEmpty else {
                 throw configurationError("Please set AI Base URL in Settings.")
             }
             guard !trimmedAPIKey.isEmpty else {
@@ -88,7 +74,7 @@ struct GeminiStreamingService {
             return AIRequest(
                 kind: .openAICompatible,
                 provider: resolvedProvider,
-                baseURL: resolvedBaseURL,
+                baseURL: trimmedBaseURL,
                 apiKey: trimmedAPIKey,
                 model: trimmedModel,
                 proxyURL: trimmedProxyURL,
@@ -134,11 +120,6 @@ private extension GeminiStreamingService {
     struct ImageInput: Sendable {
         let mimeType: String
         let base64: String
-    }
-
-    static func defaultOpenAIBaseURL(for provider: String) -> String {
-        _ = provider
-        return "https://api.openai.com/v1/chat/completions"
     }
 
     static func makeSession(proxyURL: String) -> URLSession {
@@ -305,37 +286,18 @@ private extension GeminiStreamingService {
             throw networkError(provider: request.provider, statusCode: http.statusCode, body: bodyText)
         }
 
-        var didYieldChunk = false
-        var nonSSEPayload = ""
-
         for try await rawLine in bytes.lines {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty else { continue }
-
-            if line.hasPrefix("data:") {
-                var payload = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                if payload.hasPrefix(":") {
-                    payload.removeFirst()
-                    payload = payload.trimmingCharacters(in: .whitespaces)
-                }
-                if payload == "[DONE]" {
-                    break
-                }
-
-                let chunk = extractOpenAIContent(rawJSON: payload)
-                if !chunk.isEmpty {
-                    didYieldChunk = true
-                    continuation.yield(chunk)
-                }
-            } else {
-                nonSSEPayload += line
+            guard line.hasPrefix("data:") else { continue }
+            let payload = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            if payload == "[DONE]" {
+                break
             }
-        }
 
-        if !didYieldChunk {
-            let fallback = extractOpenAIContent(rawJSON: nonSSEPayload)
-            if !fallback.isEmpty {
-                continuation.yield(fallback)
+            let chunk = extractOpenAIContent(rawJSON: payload)
+            if !chunk.isEmpty {
+                continuation.yield(chunk)
             }
         }
 
@@ -411,17 +373,6 @@ private extension GeminiStreamingService {
                let content = delta["content"] as? String {
                 return content
             }
-            if let message = first["message"] as? [String: Any],
-               let content = message["content"] as? String {
-                return content
-            }
-            if let text = first["text"] as? String {
-                return text
-            }
-        }
-
-        if let output = object["output"] as? String {
-            return output
         }
 
         return ""

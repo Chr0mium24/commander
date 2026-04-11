@@ -12,8 +12,6 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.streamingMarkdownCommitInterval) private var streamingMarkdownCommitInterval = 50
     @AppStorage(AppStorageKey.multilineInput) private var multilineInput = false
 
-    @AppStorage(AppStorageKey.geminiKey) private var geminiKey = ""
-    @AppStorage(AppStorageKey.geminiModel) private var geminiModel = "gemini-1.5-flash"
     @AppStorage(AppStorageKey.geminiProxy) private var geminiProxy = ""
     @AppStorage(AppStorageKey.aiProvider) private var aiProvider = ""
     @AppStorage(AppStorageKey.aiBaseURL) private var aiBaseURL = ""
@@ -178,27 +176,22 @@ struct SettingsView: View {
 
     private var aiTab: some View {
         Form {
-            Section("Gemini Streaming (Built-in)") {
-                SecureField("API Key", text: $geminiKey)
-                TextField("Model Name", text: $geminiModel)
-                Text("Default: gemini-1.5-flash")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section("AI Provider") {
+                TextField("Provider", text: $aiProvider, prompt: Text("gemini / openai_compatible"))
+                SecureField("API Key", text: $aiApiKey)
+                TextField("Model", text: $aiModel, prompt: Text("gpt-4.1 / gemini-2.5-flash"))
             }
 
             Section("Network") {
                 TextField("Proxy URL (Optional)", text: $geminiProxy, prompt: Text("https://your-proxy.com"))
-                Text("Leave empty to use the default Gemini API endpoint.")
+                Text("Leave empty to connect directly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("OpenAI-Compatible Plugins") {
-                TextField("Provider Name (Optional)", text: $aiProvider, prompt: Text("openai_compatible"))
+            Section("OpenAI-Compatible Endpoint") {
                 TextField("Base URL", text: $aiBaseURL, prompt: Text("https://api.openai.com/v1/chat/completions"))
-                SecureField("API Key", text: $aiApiKey)
-                TextField("Model", text: $aiModel, prompt: Text("DeepSeek-V3.2"))
-                Text("These fields are consumed by OpenAI-compatible requests and Python plugins.")
+                Text("Used only when provider is `openai_compatible`.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -246,8 +239,8 @@ struct SettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                commandExample("set get gemini_model")
-                commandExample("set gemini_model gemini-1.5-flash")
+                commandExample("set ai_provider gemini")
+                commandExample("set ai_model gemini-2.5-flash")
                 commandExample("set auto_copy true")
                 commandExample("set history_limit 50")
                 commandExample("set streaming_markdown_commit_interval 50")

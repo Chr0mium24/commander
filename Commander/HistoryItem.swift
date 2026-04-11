@@ -17,8 +17,6 @@ enum AppStorageKey {
     static let aiSystemPrompt = "aiSystemPrompt"
     static let todoState = "todoState"
     
-    static let geminiKey = "geminiApiKey"
-    static let geminiModel = "geminiModel"
     static let geminiProxy = "geminiProxy"
 
     static let aiProvider = "aiProvider"
