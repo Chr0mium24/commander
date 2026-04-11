@@ -9,6 +9,7 @@ SDK="macosx"
 DERIVED_DATA="/tmp/CommanderGateBuild"
 LOCAL_VENV_PATH="${ENGINE_DIR}/.venv"
 UV_PROJECT_ENV_PATH="${REPO_ROOT}/.venv"
+UV_BIN=""
 
 usage() {
   cat <<'EOF'
@@ -74,6 +75,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+UV_BIN="$(resolve_uv_executable || true)"
+if [[ -z "${UV_BIN}" ]]; then
+  echo "[gate] uv not found. Install uv or set COMMANDER_UV_BIN to the uv executable path." >&2
+  echo "[gate] Tried PATH and common locations like /opt/homebrew/bin/uv." >&2
+  exit 1
+fi
+
 if [[ -d "${LOCAL_VENV_PATH}" ]]; then
   remove_path "${LOCAL_VENV_PATH}" "local virtualenv to avoid Xcode resource collisions"
 fi
@@ -106,7 +114,7 @@ xcodebuild \
 
 echo "==> [gate] Python compile check"
 cd "${ENGINE_DIR}"
-UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" uv run --project . python -m py_compile \
+UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" "${UV_BIN}" run --project . python -m py_compile \
   python/command_engine/main.py \
   python/command_engine/router.py \
   python/command_engine/plugin_registry.py \
@@ -119,8 +127,8 @@ UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" uv run --project . python -m py_
   python/command_engine/plugins/music.py
 
 echo "==> [gate] Router smoke tests"
-HELP_OUTPUT="$(UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" uv run --project . python python/commander_engine.py '{"query":"help","settings":{}}')"
-PLUGINS_OUTPUT="$(UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" uv run --project . python python/commander_engine.py '{"query":"plugins","settings":{}}')"
+HELP_OUTPUT="$(UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" "${UV_BIN}" run --project . python python/commander_engine.py '{"query":"help","settings":{}}')"
+PLUGINS_OUTPUT="$(UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENV_PATH}" "${UV_BIN}" run --project . python python/commander_engine.py '{"query":"plugins","settings":{}}')"
 
 if [[ "${HELP_OUTPUT}" != *"Commander Python Engine"* ]]; then
   echo "[gate] help smoke check failed"

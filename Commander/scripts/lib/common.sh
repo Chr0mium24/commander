@@ -23,6 +23,33 @@ require_command() {
   fi
 }
 
+resolve_uv_executable() {
+  local override="${COMMANDER_UV_BIN:-}"
+  if [[ -n "${override}" && -x "${override}" ]]; then
+    printf '%s\n' "${override}"
+    return 0
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+
+  local candidate
+  for candidate in \
+    "/opt/homebrew/bin/uv" \
+    "/usr/local/bin/uv" \
+    "/usr/bin/uv" \
+    "/bin/uv"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 infer_github_repo() {
   git remote get-url origin 2>/dev/null | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##'
 }
