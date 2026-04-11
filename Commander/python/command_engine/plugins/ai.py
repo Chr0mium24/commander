@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from urllib import error as urllib_error
-from urllib import parse as urllib_parse
-from urllib import request as urllib_request
+from requests import RequestException
+from requests import get
+from requests.compat import urlparse, urlunparse
+from requests.exceptions import HTTPError
 
 from ..prompts import dictionary_prompt, is_single_word
 from ..runtime import EngineContext
@@ -225,24 +226,24 @@ def render_openai_models(settings: dict[str, object]) -> str:
     if not models_url:
         return "Invalid `aiBaseURL`. Please set a valid OpenAI-compatible chat completions URL."
 
-    request_obj = urllib_request.Request(
-        models_url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-            "User-Agent": "curl/8.7.1",
-        },
-        method="GET",
-    )
-
     try:
-        with urllib_request.urlopen(request_obj, timeout=20) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-    except urllib_error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        return f"Model list request failed ({exc.code}).\n{body}".strip()
-    except urllib_error.URLError as exc:
-        return f"Model list request failed: {exc.reason}"
+        response = get(
+            models_url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "User-Agent": "curl/8.7.1",
+            },
+            timeout=20,
+        )
+        raw = response.text
+        response.raise_for_status()
+    except HTTPError as exc:
+        body = exc.response.text if exc.response is not None else ""
+        status_code = exc.response.status_code if exc.response is not None else "unknown"
+        return f"Model list request failed ({status_code}).\n{body}".strip()
+    except RequestException as exc:
+        return f"Model list request failed: {exc}"
 
     try:
         payload = json.loads(raw)
@@ -269,7 +270,7 @@ def render_openai_models(settings: dict[str, object]) -> str:
 
 
 def resolve_openai_models_url(base_url: str) -> str:
-    parsed = urllib_parse.urlparse(base_url)
+    parsed = urlparse(base_url)
     if not parsed.scheme or not parsed.netloc:
         return ""
 
@@ -289,7 +290,7 @@ def resolve_openai_models_url(base_url: str) -> str:
     else:
         path = "/v1/models"
 
-    return urllib_parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
 def extract_model_ids(payload: object) -> list[str]:
