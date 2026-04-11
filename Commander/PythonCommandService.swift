@@ -513,8 +513,9 @@ private actor PersistentPythonEngine {
         let outputPipe = Pipe()
         let process = Process()
 
-        process.executableURL = URL(fileURLWithPath: PythonEngineRunner.envExecutable)
-        var arguments = ["uv", "run"]
+        let uvExecutable = PythonEngineRunner.resolveUVExecutable()
+        process.executableURL = URL(fileURLWithPath: uvExecutable)
+        var arguments = ["run"]
         if let projectDir = newConfiguration.projectDir, !projectDir.isEmpty {
             arguments += ["--project", projectDir]
         }
@@ -597,7 +598,12 @@ private actor PersistentPythonEngine {
 }
 
 private enum PythonEngineRunner {
-    nonisolated fileprivate static let envExecutable = "/usr/bin/env"
+    nonisolated fileprivate static let defaultUVSearchPaths = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ]
 
     static func run(
         scriptPath: String,
@@ -634,7 +640,8 @@ private enum PythonEngineRunner {
     }
 
     nonisolated private static func runWithUV(scriptPath: String, payload: String) -> UVRunResult {
-        var arguments = ["uv", "run"]
+        let uvExecutable = resolveUVExecutable()
+        var arguments = ["run"]
         let projectDir = resolveUVProjectDir(scriptPath: scriptPath)
         if let projectDir {
             arguments += ["--project", projectDir]
@@ -642,7 +649,7 @@ private enum PythonEngineRunner {
         arguments += ["python", scriptPath, payload]
 
         let outcome = runProcess(
-            executable: envExecutable,
+            executable: uvExecutable,
             arguments: arguments,
             environment: uvEnvironment(projectDir: projectDir)
         )
@@ -709,6 +716,7 @@ private enum PythonEngineRunner {
     nonisolated fileprivate static func uvEnvironment(projectDir: String?) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "VIRTUAL_ENV")
+        environment["PATH"] = mergedPath(existingPath: environment["PATH"])
 
         let fileManager = FileManager.default
         let envOverride = environment["COMMANDER_UV_ENV_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -735,6 +743,50 @@ private enum PythonEngineRunner {
         }
 
         return environment
+    }
+
+    nonisolated fileprivate static func resolveUVExecutable() -> String {
+        let environment = ProcessInfo.processInfo.environment
+        let fileManager = FileManager.default
+
+        if let override = environment["COMMANDER_UV_BIN"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty,
+           fileManager.isExecutableFile(atPath: override) {
+            return override
+        }
+
+        let pathEntries = mergedPathEntries(existingPath: environment["PATH"])
+        for entry in pathEntries {
+            let candidate = URL(fileURLWithPath: entry).appendingPathComponent("uv").path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        return "uv"
+    }
+
+    nonisolated private static func mergedPath(existingPath: String?) -> String {
+        mergedPathEntries(existingPath: existingPath).joined(separator: ":")
+    }
+
+    nonisolated private static func mergedPathEntries(existingPath: String?) -> [String] {
+        let existingEntries = (existingPath ?? "")
+            .split(separator: ":")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        return uniquePathEntries(existingEntries + defaultUVSearchPaths)
+    }
+
+    nonisolated private static func uniquePathEntries(_ entries: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for entry in entries {
+            if seen.insert(entry).inserted {
+                ordered.append(entry)
+            }
+        }
+        return ordered
     }
 
     nonisolated private static func runProcess(
