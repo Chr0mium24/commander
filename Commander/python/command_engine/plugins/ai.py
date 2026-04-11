@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
+
 from ..prompts import dictionary_prompt, is_single_word
 from ..runtime import EngineContext
 from ..plugin_registry import CommandRegistry
@@ -16,6 +21,7 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
         "AI Commands",
         [
             "`ai` or `ai status` show active provider/model config",
+            "`ai models` list models from the configured OpenAI-compatible endpoint",
             "`ai <prompt>` force AI mode",
             f"`{alias_def} <word>` force dictionary mode",
             f"`{alias_ask} <question>` force AI mode alias",
@@ -48,6 +54,10 @@ def handle_ai(context: EngineContext, content: str) -> None:
     payload = content.strip()
     if not payload or payload.lower() == "status":
         context.response["output"] = render_ai_status(context)
+        context.response["should_save_history"] = False
+        return
+    if payload.lower() == "models":
+        context.response["output"] = render_openai_models(context.settings)
         context.response["should_save_history"] = False
         return
 
@@ -195,6 +205,111 @@ def render_ai_status(context: EngineContext) -> str:
                 "- `set ai_model <model>`",
                 "- `set ai_api_key <key>`",
                 "- `set ai_system_prompt <text>`",
+                "- `ai models`",
             ]
         )
     return "\n".join(lines)
+
+
+def render_openai_models(settings: dict[str, object]) -> str:
+    request = resolve_ai_request(settings)
+    if request.get("kind") != "openai_compatible":
+        return "Model listing is available only for `openai_compatible` provider."
+
+    api_key = str(request.get("api_key") or "").strip()
+    if not api_key:
+        return "Missing `aiApiKey`. Use `set ai_api_key <key>`."
+
+    base_url = str(request.get("base_url") or "").strip()
+    models_url = resolve_openai_models_url(base_url)
+    if not models_url:
+        return "Invalid `aiBaseURL`. Please set a valid OpenAI-compatible chat completions URL."
+
+    request_obj = urllib_request.Request(
+        models_url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="GET",
+    )
+
+    try:
+        with urllib_request.urlopen(request_obj, timeout=20) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except urllib_error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return f"Model list request failed ({exc.code}).\n{body}".strip()
+    except urllib_error.URLError as exc:
+        return f"Model list request failed: {exc.reason}"
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return f"Model list request returned non-JSON response:\n{raw}".strip()
+
+    models = extract_model_ids(payload)
+    if not models:
+        return "No models found in provider response."
+
+    preview_limit = 80
+    preview = models[:preview_limit]
+    lines = [
+        "### OpenAI-Compatible Models",
+        "",
+        f"- Endpoint: `{models_url}`",
+        f"- Count: `{len(models)}`",
+        "",
+    ]
+    lines.extend(f"- `{model}`" for model in preview)
+    if len(models) > preview_limit:
+        lines.append(f"- `... and {len(models) - preview_limit} more`")
+    return "\n".join(lines)
+
+
+def resolve_openai_models_url(base_url: str) -> str:
+    parsed = urllib_parse.urlparse(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+
+    path = parsed.path or ""
+    if path.endswith("/chat/completions"):
+        path = path[: -len("/chat/completions")] + "/models"
+    elif path.endswith("/completions"):
+        path = path[: -len("/completions")] + "/models"
+    elif path.endswith("/v1"):
+        path = f"{path}/models"
+    elif path.endswith("/models"):
+        pass
+    elif path.endswith("/"):
+        path = f"{path}models"
+    elif path:
+        path = f"{path}/models"
+    else:
+        path = "/v1/models"
+
+    return urllib_parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
+
+def extract_model_ids(payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+
+    candidates: list[object] = []
+    data = payload.get("data")
+    if isinstance(data, list):
+        candidates = data
+    elif isinstance(payload.get("models"), list):
+        candidates = payload["models"]
+
+    model_ids: list[str] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        if isinstance(model_id, str):
+            trimmed = model_id.strip()
+            if trimmed:
+                model_ids.append(trimmed)
+
+    return sorted(set(model_ids))
