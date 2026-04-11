@@ -229,7 +229,8 @@ def render_openai_models(settings: dict[str, object]) -> str:
         models_url,
         headers={
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "curl/8.7.1",
         },
         method="GET",
     )
