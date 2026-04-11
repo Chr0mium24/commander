@@ -260,7 +260,7 @@ private extension GeminiStreamingService {
         images: [ImageInput],
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
-        guard let url = URL(string: request.baseURL) else {
+        guard let url = resolveOpenAICompatibleChatURL(from: request.baseURL) else {
             throw URLError(.badURL)
         }
 
@@ -302,6 +302,35 @@ private extension GeminiStreamingService {
         }
 
         continuation.finish()
+    }
+
+    static func resolveOpenAICompatibleChatURL(from rawBaseURL: String) -> URL? {
+        let trimmed = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var components = URLComponents(string: trimmed) else {
+            return nil
+        }
+
+        var path = components.path
+        if path.isEmpty || path == "/" {
+            path = "/v1/chat/completions"
+        } else if path.hasSuffix("/chat/completions") {
+            // Keep as-is.
+        } else if path.hasSuffix("/completions") {
+            path = String(path.dropLast("/completions".count)) + "/chat/completions"
+        } else if path.hasSuffix("/models") {
+            path = String(path.dropLast("/models".count)) + "/chat/completions"
+        } else if path.hasSuffix("/v1") {
+            path += "/chat/completions"
+        } else if path.hasSuffix("/v1/") {
+            path += "chat/completions"
+        } else if path.hasSuffix("/") {
+            path += "chat/completions"
+        } else {
+            path += "/chat/completions"
+        }
+
+        components.path = path
+        return components.url
     }
 
     static func openAICompatibleRequestBody(
