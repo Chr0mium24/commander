@@ -183,12 +183,14 @@ def render_ai_status(context: EngineContext) -> str:
     ai_model = str(settings.get("aiModel") or "").strip()
     ai_api_key = str(settings.get("aiApiKey") or "").strip()
     has_system_prompt = bool(str(settings.get("aiSystemPrompt") or "").strip())
+    active_profile = current_profile_name(settings)
     use_gemini = (not provider and not base_url) or provider == "gemini"
     resolved_provider = "gemini" if use_gemini else "openai_compatible"
 
     lines = [
         "### AI Status",
         "",
+        f"- Profile: `{active_profile or '(none)'}`",
         f"- Provider: `{resolved_provider}`",
     ]
 
@@ -259,10 +261,8 @@ def save_current_profile(context: EngineContext, tail: str) -> str:
 
     use_gemini = (not provider and not base_url) or provider == "gemini"
     resolved_provider = "gemini" if use_gemini else "openai_compatible"
-    resolved_base_url = (
-        "https://generativelanguage.googleapis.com"
-        if use_gemini and not base_url
-        else (base_url or default_openai_base_url("openai_compatible"))
+    resolved_base_url = "" if use_gemini else (
+        base_url or default_openai_base_url("openai_compatible")
     )
     resolved_model = model or ("gemini-1.5-flash" if use_gemini else "")
 
@@ -293,25 +293,9 @@ def list_or_show_profile(context: EngineContext, tail: str) -> str:
             "Use `ai save <name>` to save current provider/baseurl/model/key/system prompt."
         )
 
-    current_provider = str(context.settings.get("aiProvider") or "").strip().lower()
-    current_base_url = str(context.settings.get("aiBaseURL") or "").strip()
-    current_model = str(context.settings.get("aiModel") or "").strip()
-    current_api_key = str(context.settings.get("aiApiKey") or "").strip()
-    current_system_prompt = str(context.settings.get("aiSystemPrompt") or "").strip()
-
     lines = ["### AI Profiles", ""]
     for name in sorted(profiles):
-        profile = profiles[name]
-        marker = ""
-        if (
-            profile.get("provider", "") == current_provider
-            and profile.get("base_url", "") == current_base_url
-            and profile.get("model", "") == current_model
-            and profile.get("api_key", "") == current_api_key
-            and profile.get("system_prompt", "") == current_system_prompt
-        ):
-            marker = " (active)"
-        lines.append(f"- `{name}`{marker}")
+        lines.append(f"- `{name}`")
 
     lines.extend(
         [
@@ -336,17 +320,22 @@ def show_profile(context: EngineContext, tail: str) -> str:
     if profile is None:
         return f"Profile `{name}` not found."
 
+    provider = str(profile.get("provider") or "").strip().lower()
     system_prompt = str(profile.get("system_prompt") or "").strip()
-    return "\n".join(
+    lines = [
+        f"### AI Profile `{name}`",
+        "",
+        f"- Provider: `{profile.get('provider', '') or '(empty)'}`",
+    ]
+    if provider != "gemini":
+        lines.append(f"- Base URL: `{profile.get('base_url', '') or '(empty)'}`")
+    lines.extend(
         [
-            f"### AI Profile `{name}`",
-            "",
-            f"- Provider: `{profile.get('provider', '') or '(empty)'}`",
-            f"- Base URL: `{profile.get('base_url', '') or '(empty)'}`",
             f"- Model: `{profile.get('model', '') or '(empty)'}`",
             f"- System Prompt: `{'configured' if system_prompt else 'empty'}`",
         ]
     )
+    return "\n".join(lines)
 
 
 def use_profile(context: EngineContext, tail: str) -> str:
@@ -380,6 +369,7 @@ def use_profile(context: EngineContext, tail: str) -> str:
         update_user_config("aiModel", model)
         update_user_config("aiApiKey", api_key)
         update_user_config("aiSystemPrompt", system_prompt)
+        update_user_config("aiActiveProfile", name)
     except OSError as exc:
         return f"Applied profile `{name}` in memory; failed saving: {exc}"
 
@@ -398,6 +388,12 @@ def remove_profile(context: EngineContext, tail: str) -> str:
     error = persist_profiles(profiles)
     if error:
         return error
+    active_profile = current_profile_name(context.settings)
+    if active_profile == name:
+        try:
+            update_user_config("aiActiveProfile", "")
+        except OSError as exc:
+            return f"Removed profile `{name}`; failed clearing active profile: {exc}"
     return f"Removed profile `{name}`."
 
 
@@ -412,6 +408,16 @@ def normalize_profile_name(raw: str) -> str:
     if not tokens:
         return ""
     return tokens[0].strip().lower()
+
+
+def current_profile_name(settings: dict[str, object]) -> str:
+    name = normalize_profile_name(str(settings.get("aiActiveProfile") or ""))
+    if not name:
+        return ""
+    profiles = load_profiles(settings)
+    if name not in profiles:
+        return ""
+    return name
 
 
 def load_profiles(settings: dict[str, object]) -> dict[str, dict[str, str]]:
@@ -451,13 +457,16 @@ def persist_profiles(profiles: dict[str, dict[str, str]]) -> str | None:
     normalized: dict[str, dict[str, str]] = {}
     for name in sorted(profiles):
         item = profiles[name]
-        normalized[name] = {
-            "provider": str(item.get("provider") or "").strip(),
-            "base_url": str(item.get("base_url") or "").strip(),
+        provider = str(item.get("provider") or "").strip().lower()
+        normalized_item = {
+            "provider": provider,
             "model": str(item.get("model") or "").strip(),
             "api_key": str(item.get("api_key") or "").strip(),
             "system_prompt": str(item.get("system_prompt") or "").strip(),
         }
+        if provider != "gemini":
+            normalized_item["base_url"] = str(item.get("base_url") or "").strip()
+        normalized[name] = normalized_item
     try:
         update_user_config("aiProfiles", normalized)
         return None
