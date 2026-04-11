@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import shlex
 from requests import RequestException
 from requests import get
 from requests.compat import urlparse, urlunparse
 from requests.exceptions import HTTPError
 
+from ..config import update_user_config
 from ..prompts import dictionary_prompt, is_single_word
 from ..runtime import EngineContext
 from ..plugin_registry import CommandRegistry
@@ -23,6 +25,11 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
         [
             "`ai` or `ai status` show active provider/model config",
             "`ai models` list models from the configured OpenAI-compatible endpoint",
+            "`ai save <name>` save current AI config profile",
+            "`ai ls` list saved AI config profiles",
+            "`ai ls <name>` or `ai show <name>` show one profile (without key)",
+            "`ai use <name>` switch to a saved profile",
+            "`ai rm <name>` remove a saved profile",
             "`ai <prompt>` force AI mode",
             f"`{alias_def} <word>` force dictionary mode",
             f"`{alias_ask} <question>` force AI mode alias",
@@ -33,7 +40,7 @@ def register(registry: CommandRegistry, context: EngineContext | None = None) ->
     registry.register_command(
         "ai",
         handle_ai,
-        usage="ai [status|<prompt>]",
+        usage="ai [status|models|save|ls|show|use|rm|<prompt>]",
         description="Show active AI provider/status or force AI mode with a prompt.",
     )
     registry.register_command(
@@ -57,8 +64,17 @@ def handle_ai(context: EngineContext, content: str) -> None:
         context.response["output"] = render_ai_status(context)
         context.response["should_save_history"] = False
         return
-    if payload.lower() == "models":
+
+    parts = payload.split(maxsplit=1)
+    head = parts[0].lower() if parts else ""
+    tail = parts[1] if len(parts) > 1 else ""
+
+    if head == "models":
         context.response["output"] = render_openai_models(context.settings)
+        context.response["should_save_history"] = False
+        return
+    if head in {"save", "ls", "use", "rm", "show"}:
+        context.response["output"] = handle_profile_command(context, head, tail)
         context.response["should_save_history"] = False
         return
 
@@ -207,9 +223,246 @@ def render_ai_status(context: EngineContext) -> str:
                 "- `set ai_api_key <key>`",
                 "- `set ai_system_prompt <text>`",
                 "- `ai models`",
+                "- `ai save <name>`",
+                "- `ai ls`",
+                "- `ai use <name>`",
             ]
         )
     return "\n".join(lines)
+
+
+def handle_profile_command(context: EngineContext, action: str, tail: str) -> str:
+    if action == "save":
+        return save_current_profile(context, tail)
+    if action == "ls":
+        return list_or_show_profile(context, tail)
+    if action == "show":
+        return show_profile(context, tail)
+    if action == "use":
+        return use_profile(context, tail)
+    if action == "rm":
+        return remove_profile(context, tail)
+    return "Unknown action."
+
+
+def save_current_profile(context: EngineContext, tail: str) -> str:
+    name = normalize_profile_name(tail)
+    if not name:
+        return "Usage: `ai save <name>`"
+
+    settings = context.settings
+    provider = str(settings.get("aiProvider") or "").strip().lower()
+    base_url = str(settings.get("aiBaseURL") or "").strip()
+    model = str(settings.get("aiModel") or "").strip()
+    api_key = str(settings.get("aiApiKey") or "").strip()
+    system_prompt = str(settings.get("aiSystemPrompt") or "").strip()
+
+    use_gemini = (not provider and not base_url) or provider == "gemini"
+    resolved_provider = "gemini" if use_gemini else "openai_compatible"
+    resolved_base_url = (
+        "https://generativelanguage.googleapis.com"
+        if use_gemini and not base_url
+        else (base_url or default_openai_base_url("openai_compatible"))
+    )
+    resolved_model = model or ("gemini-1.5-flash" if use_gemini else "")
+
+    profiles = load_profiles(settings)
+    profiles[name] = {
+        "provider": resolved_provider,
+        "base_url": resolved_base_url,
+        "model": resolved_model,
+        "api_key": api_key,
+        "system_prompt": system_prompt,
+    }
+
+    error = persist_profiles(profiles)
+    if error:
+        return error
+    return f"Saved profile `{name}`."
+
+
+def list_or_show_profile(context: EngineContext, tail: str) -> str:
+    name = normalize_profile_name(tail)
+    if name:
+        return show_profile(context, name)
+
+    profiles = load_profiles(context.settings)
+    if not profiles:
+        return (
+            "No saved AI profiles.\n\n"
+            "Use `ai save <name>` to save current provider/baseurl/model/key/system prompt."
+        )
+
+    current_provider = str(context.settings.get("aiProvider") or "").strip().lower()
+    current_base_url = str(context.settings.get("aiBaseURL") or "").strip()
+    current_model = str(context.settings.get("aiModel") or "").strip()
+    current_api_key = str(context.settings.get("aiApiKey") or "").strip()
+    current_system_prompt = str(context.settings.get("aiSystemPrompt") or "").strip()
+
+    lines = ["### AI Profiles", ""]
+    for name in sorted(profiles):
+        profile = profiles[name]
+        marker = ""
+        if (
+            profile.get("provider", "") == current_provider
+            and profile.get("base_url", "") == current_base_url
+            and profile.get("model", "") == current_model
+            and profile.get("api_key", "") == current_api_key
+            and profile.get("system_prompt", "") == current_system_prompt
+        ):
+            marker = " (active)"
+        lines.append(f"- `{name}`{marker}")
+
+    lines.extend(
+        [
+            "",
+            "Commands:",
+            "- `ai save <name>`",
+            "- `ai ls <name>`",
+            "- `ai use <name>`",
+            "- `ai rm <name>`",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def show_profile(context: EngineContext, tail: str) -> str:
+    name = normalize_profile_name(tail)
+    if not name:
+        return "Usage: `ai show <name>`"
+
+    profiles = load_profiles(context.settings)
+    profile = profiles.get(name)
+    if profile is None:
+        return f"Profile `{name}` not found."
+
+    system_prompt = str(profile.get("system_prompt") or "").strip()
+    return "\n".join(
+        [
+            f"### AI Profile `{name}`",
+            "",
+            f"- Provider: `{profile.get('provider', '') or '(empty)'}`",
+            f"- Base URL: `{profile.get('base_url', '') or '(empty)'}`",
+            f"- Model: `{profile.get('model', '') or '(empty)'}`",
+            f"- System Prompt: `{'configured' if system_prompt else 'empty'}`",
+        ]
+    )
+
+
+def use_profile(context: EngineContext, tail: str) -> str:
+    name = normalize_profile_name(tail)
+    if not name:
+        return "Usage: `ai use <name>`"
+
+    profiles = load_profiles(context.settings)
+    profile = profiles.get(name)
+    if profile is None:
+        return f"Profile `{name}` not found."
+
+    provider = str(profile.get("provider") or "").strip()
+    base_url = str(profile.get("base_url") or "").strip()
+    model = str(profile.get("model") or "").strip()
+    api_key = str(profile.get("api_key") or "").strip()
+    system_prompt = str(profile.get("system_prompt") or "").strip()
+
+    updates = [
+        {"key": "aiProvider", "value": provider, "value_type": "string"},
+        {"key": "aiBaseURL", "value": base_url, "value_type": "string"},
+        {"key": "aiModel", "value": model, "value_type": "string"},
+        {"key": "aiApiKey", "value": api_key, "value_type": "string"},
+        {"key": "aiSystemPrompt", "value": system_prompt, "value_type": "string"},
+    ]
+    context.response["setting_updates"] = updates
+
+    try:
+        update_user_config("aiProvider", provider)
+        update_user_config("aiBaseURL", base_url)
+        update_user_config("aiModel", model)
+        update_user_config("aiApiKey", api_key)
+        update_user_config("aiSystemPrompt", system_prompt)
+    except OSError as exc:
+        return f"Applied profile `{name}` in memory; failed saving: {exc}"
+
+    return f"Applied profile `{name}`."
+
+
+def remove_profile(context: EngineContext, tail: str) -> str:
+    name = normalize_profile_name(tail)
+    if not name:
+        return "Usage: `ai rm <name>`"
+
+    profiles = load_profiles(context.settings)
+    if name not in profiles:
+        return f"Profile `{name}` not found."
+    profiles.pop(name, None)
+    error = persist_profiles(profiles)
+    if error:
+        return error
+    return f"Removed profile `{name}`."
+
+
+def normalize_profile_name(raw: str) -> str:
+    text = raw.strip()
+    if not text:
+        return ""
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        return ""
+    if not tokens:
+        return ""
+    return tokens[0].strip().lower()
+
+
+def load_profiles(settings: dict[str, object]) -> dict[str, dict[str, str]]:
+    raw = settings.get("aiProfiles")
+    payload: object = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return {}
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    profiles: dict[str, dict[str, str]] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            continue
+        name = key.strip().lower()
+        if not name:
+            continue
+        profiles[name] = {
+            "provider": str(value.get("provider") or "").strip(),
+            "base_url": str(value.get("base_url") or "").strip(),
+            "model": str(value.get("model") or "").strip(),
+            "api_key": str(value.get("api_key") or "").strip(),
+            "system_prompt": str(value.get("system_prompt") or "").strip(),
+        }
+
+    return profiles
+
+
+def persist_profiles(profiles: dict[str, dict[str, str]]) -> str | None:
+    normalized: dict[str, dict[str, str]] = {}
+    for name in sorted(profiles):
+        item = profiles[name]
+        normalized[name] = {
+            "provider": str(item.get("provider") or "").strip(),
+            "base_url": str(item.get("base_url") or "").strip(),
+            "model": str(item.get("model") or "").strip(),
+            "api_key": str(item.get("api_key") or "").strip(),
+            "system_prompt": str(item.get("system_prompt") or "").strip(),
+        }
+    try:
+        update_user_config("aiProfiles", normalized)
+        return None
+    except OSError as exc:
+        return f"Failed saving profiles: {exc}"
 
 
 def render_openai_models(settings: dict[str, object]) -> str:
