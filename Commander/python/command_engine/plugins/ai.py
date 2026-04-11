@@ -109,8 +109,6 @@ def resolve_ai_request(settings: dict[str, object]) -> dict[str, str]:
     ai_model = str(settings.get("aiModel") or "").strip()
     system_prompt = str(settings.get("aiSystemPrompt") or "").strip()
 
-    gemini_api_key = str(settings.get("geminiApiKey") or "").strip()
-    gemini_model = str(settings.get("geminiModel") or "").strip() or "gemini-1.5-flash"
     proxy_url = str(settings.get("geminiProxy") or "").strip()
 
     use_gemini = (not provider and not base_url) or provider == "gemini"
@@ -119,17 +117,16 @@ def resolve_ai_request(settings: dict[str, object]) -> dict[str, str]:
             "kind": "gemini",
             "provider": "gemini",
             "base_url": "https://generativelanguage.googleapis.com",
-            "api_key": gemini_api_key,
-            "model": gemini_model,
+            "api_key": ai_api_key,
+            "model": ai_model or "gemini-1.5-flash",
             "proxy_url": proxy_url,
             "system_prompt": system_prompt,
         }
 
-    normalized_provider = provider or "openai_compatible"
-    resolved_base_url = base_url or default_openai_base_url(normalized_provider)
+    resolved_base_url = base_url or default_openai_base_url("openai_compatible")
     return {
         "kind": "openai_compatible",
-        "provider": normalized_provider,
+        "provider": "openai_compatible",
         "base_url": resolved_base_url,
         "api_key": ai_api_key,
         "model": ai_model,
@@ -138,9 +135,7 @@ def resolve_ai_request(settings: dict[str, object]) -> dict[str, str]:
     }
 
 
-def default_openai_base_url(provider: str) -> str:
-    if provider in {"edge", "edgefn"}:
-        return "https://api.edgefn.net/v1/chat/completions"
+def default_openai_base_url(_provider: str) -> str:
     return "https://api.openai.com/v1/chat/completions"
 
 
@@ -156,42 +151,50 @@ def apply_ai_request(context: EngineContext, request: dict[str, str]) -> None:
 
 def render_ai_status(context: EngineContext) -> str:
     settings = context.settings
-    provider = str(settings.get("aiProvider") or "").strip()
+    provider = str(settings.get("aiProvider") or "").strip().lower()
     base_url = str(settings.get("aiBaseURL") or "").strip()
-    model = str(settings.get("aiModel") or "").strip()
-    gemini_model = str(settings.get("geminiModel") or "").strip()
-
-    if not provider:
-        provider = "openai_compatible" if base_url else "gemini"
+    ai_model = str(settings.get("aiModel") or "").strip()
+    ai_api_key = str(settings.get("aiApiKey") or "").strip()
+    has_system_prompt = bool(str(settings.get("aiSystemPrompt") or "").strip())
+    use_gemini = (not provider and not base_url) or provider == "gemini"
+    resolved_provider = "gemini" if use_gemini else "openai_compatible"
 
     lines = [
         "### AI Status",
         "",
-        f"- Provider: `{provider}`",
+        f"- Provider: `{resolved_provider}`",
     ]
 
-    if provider == "gemini":
-        lines.append(f"- Model: `{gemini_model or 'gemini-1.5-flash'}`")
-        lines.append("- Key: `geminiApiKey`")
+    if use_gemini:
+        lines.append(f"- Model: `{ai_model or 'gemini-1.5-flash'}`")
+        lines.append(f"- Key: `{'configured' if ai_api_key else 'empty'}`")
     else:
-        lines.append(f"- Base URL: `{base_url or '(empty)'}`")
-        lines.append(f"- Model: `{model or '(empty)'}`")
-        lines.append("- Key: `aiApiKey`")
+        resolved_base_url = base_url or default_openai_base_url("openai_compatible")
+        lines.append(f"- Base URL: `{resolved_base_url}`")
+        lines.append(f"- Model: `{ai_model or '(empty)'}`")
+        lines.append(f"- Key: `{'configured' if ai_api_key else 'empty'}`")
     lines.append(
-        f"- System Prompt: `{'configured' if str(settings.get('aiSystemPrompt') or '').strip() else 'empty'}`"
+        f"- System Prompt: `{'configured' if has_system_prompt else 'empty'}`"
     )
 
-    lines.extend(
-        [
-            "",
-            "Update via:",
-            "- `set ai_provider <name>`",
-            "- `set ai_base_url <url>`",
-            "- `set ai_model <model>`",
-            "- `set ai_api_key <key>`",
-            "- `set ai_system_prompt <text>`",
-            "- `set gemini_model <model>`",
-            "- `set gemini_key <key>`",
-        ]
-    )
+    lines.extend(["", "Update via:"])
+    if use_gemini:
+        lines.extend(
+            [
+                "- `set ai_provider openai_compatible | gemini`",
+                "- `set ai_model <model>`",
+                "- `set ai_api_key <key>`",
+                "- `set ai_system_prompt <text>`",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "- `set ai_provider openai_compatible | gemini`",
+                "- `set ai_base_url <url>`",
+                "- `set ai_model <model>`",
+                "- `set ai_api_key <key>`",
+                "- `set ai_system_prompt <text>`",
+            ]
+        )
     return "\n".join(lines)

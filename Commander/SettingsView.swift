@@ -194,11 +194,11 @@ struct SettingsView: View {
             }
 
             Section("OpenAI-Compatible Plugins") {
-                TextField("Provider Name (Optional)", text: $aiProvider, prompt: Text("edgefn / openai_compatible"))
-                TextField("Base URL", text: $aiBaseURL, prompt: Text("https://api.edgefn.net/v1/chat/completions"))
+                TextField("Provider Name (Optional)", text: $aiProvider, prompt: Text("openai_compatible"))
+                TextField("Base URL", text: $aiBaseURL, prompt: Text("https://api.openai.com/v1/chat/completions"))
                 SecureField("API Key", text: $aiApiKey)
                 TextField("Model", text: $aiModel, prompt: Text("DeepSeek-V3.2"))
-                Text("These fields are consumed by Python plugins (for example `edge` command).")
+                Text("These fields are consumed by OpenAI-compatible requests and Python plugins.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -253,7 +253,7 @@ struct SettingsView: View {
                 commandExample("set streaming_markdown_commit_interval 50")
                 commandExample("set script_dir /Users/you/scripts")
                 commandExample("set plugin_dir ~/Library/Application\\ Support/Commander/plugins")
-                commandExample("set ai_base_url https://api.edgefn.net/v1/chat/completions")
+                commandExample("set ai_base_url https://api.openai.com/v1/chat/completions")
                 commandExample("set ai_api_key sk-...")
                 commandExample("set ai_system_prompt 回答里的行内公式必须使用$...$包裹")
                 commandExample("set")

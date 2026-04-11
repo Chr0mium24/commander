@@ -137,12 +137,8 @@ private extension GeminiStreamingService {
     }
 
     static func defaultOpenAIBaseURL(for provider: String) -> String {
-        switch provider {
-        case "edge", "edgefn":
-            return "https://api.edgefn.net/v1/chat/completions"
-        default:
-            return "https://api.openai.com/v1/chat/completions"
-        }
+        _ = provider
+        return "https://api.openai.com/v1/chat/completions"
     }
 
     static func makeSession(proxyURL: String) -> URLSession {
